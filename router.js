@@ -1350,7 +1350,7 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
     // 2. Admin/Superadmin can see any teacher's timetable
     // 3. Students/Parents cannot access teacher timetables
     
-    if (req.user.role === 'teacher' && req.user.userId !== teacherId) {
+    if (req.user.role === 'teacher' && req.user.userid !== teacherId) {
       return res.status(403).json({
         success: false,
         error: 'Access denied. You can only view your own timetable.'
@@ -1368,7 +1368,7 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
     if (req.user.role !== 'teacher') {
       const teacherCheck = await pool.query(`
         SELECT id, name FROM public.users
-        WHERE id = $1 AND role = $2 AND branch_id = $3
+        WHERE userid = $1 AND role = $2 AND branch_id = $3
       `, [teacherId, 'teacher', req.user.branchId]);
 
       if (teacherCheck.rows.length === 0) {
@@ -1404,7 +1404,7 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
       FROM branch.timetables t
       JOIN branch.classes c ON t.class_id = c.id
       LEFT JOIN public.users u ON t.teacher_id = u.id
-      WHERE t.teacher_id = $1
+      WHERE u.userid = $1
         AND t.branch_id = $2
         AND c.status = 'active'
       ORDER BY t.day_of_week, t.start_time
@@ -1453,7 +1453,7 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
         t.subjects
       FROM public.users u
       LEFT JOIN branch.teachers t ON u.id = t.user_id
-      WHERE u.id = $1 AND u.role = 'teacher'
+      WHERE u.userid = $1 AND u.role = 'teacher'
     `, [teacherId]);
 
     const response = {
@@ -1478,6 +1478,1394 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
     res.status(500).json({
       success: false,
       error: 'Failed to fetch teacher timetable'
+    });
+  }
+});
+
+// GET /api/classes/:id/students - Get students in a class (for class teachers)
+// router.get('/:id/students', authenticateToken, async (req, res) => {
+//   console.log('🔥 GET /api/classes/:id/students - Incoming request:', {
+//     headers: req.headers,
+//     params: req.params,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
+
+//   try {
+//     const { id } = req.params;
+//     console.log('📋 GET /api/classes/:id/students - Class ID:', id);
+
+//     // Verify class belongs to user's branch and user is the class teacher
+//     const classCheck = await pool.query(`
+//       SELECT
+//         c.*,
+//         u.name as teacher_name,
+//         u.email as teacher_email
+//       FROM branch.classes c
+//       LEFT JOIN public.users u ON c.teacher_id = u.id
+//       WHERE c.id = $1 AND c.branch_id = $2
+//     `, [id, req.user.branchId]);
+
+//     if (classCheck.rows.length === 0) {
+//       console.log('⚠️ GET /api/classes/:id/students - Class not found:', id);
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Class not found'
+//       });
+//     }
+
+//     const classData = classCheck.rows[0];
+
+//     // Verify user is the class teacher (for teacher role)
+//     if (req.user.role === 'teacher' && classData.teacher_id !== req.user.userid && classData.teacher_id !== req.user.id) {
+//       console.log('⚠️ GET /api/classes/:id/students - Access denied for teacher:', {
+//         teacherId: req.user.userid,
+//         classTeacherId: classData.teacher_id,
+//         classId: id
+//       });
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Access denied. You are not the class teacher.'
+//       });
+//     }
+
+//     // Get students enrolled in this class
+//     const result = await pool.query(`
+//       SELECT
+//         s.id,
+//         s.student_id,
+//         s.roll_number,
+//         s.name,
+//         s.gender,
+//         s.phone,
+//         s.address,
+//         s.date_of_birth,
+//         s.admission_date,
+//         s.status,
+//         s.academic_year,
+//         s.blood_group,
+//         s.medical_info,
+//         s.transport_required,
+//         s.hostel_required,
+//         u.email,
+//         u.phone as user_phone,
+//         u.name as user_name,
+//         -- Parent information
+//         p.father_name,
+//         p.mother_name,
+//         p.primary_contact_name,
+//         pu.name as parent_name,
+//         pu.email as parent_email,
+//         pu.phone as parent_phone
+//       FROM branch.students s
+//       LEFT JOIN public.users u ON s.user_id = u.id
+//       LEFT JOIN branch.parent_student_relations psr ON s.id = psr.student_id AND psr.is_primary_contact = true
+//       LEFT JOIN branch.parents p ON psr.parent_id = p.id
+//       LEFT JOIN public.users pu ON psr.parent_id = pu.id
+//       WHERE s.class_id = $1 AND s.status = $2
+//       ORDER BY
+//         CASE
+//           WHEN s.roll_number IS NULL THEN 1
+//           ELSE 0
+//         END,
+//         s.roll_number ASC,
+//         s.name ASC
+//     `, [id, 'Active']);
+
+//     // Calculate gender distribution
+//     const genderStats = {
+//       male: result.rows.filter(s => s.gender === 'Male').length,
+//       female: result.rows.filter(s => s.gender === 'Female').length,
+//       other: result.rows.filter(s => s.gender && !['Male', 'Female'].includes(s.gender)).length
+//     };
+
+//     const response = {
+//       success: true,
+//       data: {
+//         class: {
+//           id: classData.id,
+//           class_name: classData.class_name,
+//           grade: classData.grade,
+//           standard: classData.standard,
+//           capacity: classData.capacity,
+//           room_number: classData.room_number,
+//           semester: classData.semester,
+//           academic_year: classData.academic_year,
+//           teacher: {
+//             id: classData.teacher_id,
+//             name: classData.teacher_name,
+//             email: classData.teacher_email
+//           }
+//         },
+//         students: result.rows.map(student => ({
+//           id: student.id,
+//           student_id: student.student_id,
+//           roll_number: student.roll_number,
+//           name: student.user_name || student.name,
+//           gender: student.gender,
+//           phone: student.user_phone || student.phone,
+//           email: student.email,
+//           address: student.address,
+//           date_of_birth: student.date_of_birth,
+//           admission_date: student.admission_date,
+//           status: student.status,
+//           academic_year: student.academic_year,
+//           blood_group: student.blood_group,
+//           medical_info: student.medical_info,
+//           transport_required: student.transport_required,
+//           hostel_required: student.hostel_required,
+//           parent: {
+//             name: student.parent_name || student.primary_contact_name,
+//             father_name: student.father_name,
+//             mother_name: student.mother_name,
+//             email: student.parent_email,
+//             phone: student.parent_phone
+//           }
+//         })),
+//         statistics: {
+//           total_students: result.rows.length,
+//           active_students: result.rows.filter(s => s.status === 'Active').length,
+//           gender_distribution: genderStats,
+//           with_transport: result.rows.filter(s => s.transport_required === true).length,
+//           with_hostel: result.rows.filter(s => s.hostel_required === true).length
+//         }
+//       }
+//     };
+
+//     console.log('✅ GET /api/classes/:id/students - Success:', {
+//       classId: id,
+//       className: classData.class_name,
+//       totalStudents: result.rows.length,
+//       teacherId: classData.teacher_id
+//     });
+
+//     res.json(response);
+//   } catch (error) {
+//     console.error('❌ GET /api/classes/:id/students - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to fetch class students'
+//     });
+//   }
+// });
+router.get('/teachers/students', authenticateToken, async (req, res) => {
+  try {
+    const teacherUUID = req.user.userId;  // UUID
+    const branchId = req.user.branchId;
+
+    // 1. Verify teacher exists
+    const teacher = await pool.query(
+      `SELECT id, userid, name, email 
+       FROM public.users 
+       WHERE id = $1 AND role = 'teacher' AND is_active = true`,
+      [teacherUUID]
+    );
+
+    if (teacher.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Teacher not found"
+      });
+    }
+
+    // 2. Find class assigned to this teacher
+    const classResult = await pool.query(
+      `SELECT * FROM branch.classes 
+       WHERE teacher_id = $1 AND branch_id = $2 AND status = 'Active'`,
+      [teacherUUID, branchId]
+    );
+
+    if (classResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "No class assigned to this teacher"
+      });
+    }
+
+    const classData = classResult.rows[0];
+
+    // 3. Fetch students of that class
+    const students = await pool.query(
+      `SELECT s.*, u.name AS student_name, u.email AS student_email
+       FROM branch.students s
+       LEFT JOIN public.users u ON u.id = s.user_id
+       WHERE s.class_id = $1 AND s.status = 'Active'
+       ORDER BY s.roll_number ASC`,
+      [classData.id]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        class: classData,
+        students: students.rows
+      }
+    });
+
+  } catch (err) {
+    console.error("Teacher students fetch error:", err);
+    res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+
+// GET /api/teachers/my-class - Get class details for the current teacher
+router.get('/teachers/my-class', authenticateToken, requireRole('teacher'), async (req, res) => {
+  console.log('🔥 GET /api/teachers/my-class - Incoming request:', {
+    headers: req.headers,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    console.log('📋 GET /api/teachers/my-class - Fetching class for teacher:', req.user.userid);
+
+    // Get the class where this teacher is assigned
+    const result = await pool.query(`
+      SELECT
+        c.*,
+        u.name as teacher_name,
+        u.email as teacher_email
+      FROM branch.classes c
+      LEFT JOIN public.users u ON c.teacher_id = u.id
+      WHERE c.teacher_id = $1
+        AND c.branch_id = $2
+        AND c.status = 'active'
+    `, [req.user.userid, req.user.branchId]);
+
+    if (result.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/my-class - No class found for teacher:', req.user.userid);
+      return res.status(404).json({
+        success: false,
+        error: 'No class assigned to you as a class teacher'
+      });
+    }
+
+    const classData = result.rows[0];
+
+    // Get student count for this class
+    const studentCountResult = await pool.query(
+      'SELECT COUNT(*) as count FROM branch.students WHERE class_id = $1 AND status = $2',
+      [classData.id, 'Active']
+    );
+
+    const response = {
+      success: true,
+      data: {
+        class: {
+          id: classData.id,
+          class_name: classData.class_name,
+          grade: classData.grade,
+          standard: classData.standard,
+          capacity: classData.capacity,
+          room_number: classData.room_number,
+          semester: classData.semester,
+          academic_year: classData.academic_year,
+          schedule: classData.schedule,
+          teacher: {
+            id: classData.teacher_id,
+            name: classData.teacher_name,
+            email: classData.teacher_email
+          }
+        },
+        student_count: parseInt(studentCountResult.rows[0].count)
+      }
+    };
+
+    console.log('✅ GET /api/teachers/my-class - Success:', {
+      teacherId: req.user.userid,
+      classId: classData.id,
+      className: classData.class_name,
+      studentCount: parseInt(studentCountResult.rows[0].count)
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/teachers/my-class - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch your class details'
+    });
+  }
+});
+
+// GET /api/teachers/my-students - Get all students in the teacher's assigned class
+router.get('/teachers/my-students', authenticateToken, requireRole('teacher'), async (req, res) => {
+  console.log('🔥 GET /api/teachers/my-students - Incoming request:', {
+    headers: req.headers,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    console.log('📋 GET /api/teachers/my-students - Fetching students for teacher:', req.user.userid);
+
+    // First get the class where this teacher is assigned
+    const classResult = await pool.query(`
+      SELECT
+        c.*,
+        u.name as teacher_name,
+        u.email as teacher_email
+      FROM branch.classes c
+      LEFT JOIN public.users u ON c.teacher_id = u.id
+      WHERE c.teacher_id = $1
+        AND c.branch_id = $2
+        AND c.status = 'active'
+    `, [req.user.userid, req.user.branchId]);
+
+    if (classResult.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/my-students - No class found for teacher:', req.user.userid);
+      return res.status(404).json({
+        success: false,
+        error: 'No class assigned to you as a class teacher'
+      });
+    }
+
+    const classData = classResult.rows[0];
+    const classId = classData.id;
+
+    // Get all students in this class
+    const result = await pool.query(`
+      SELECT
+        s.id,
+        s.student_id,
+        s.roll_number,
+        s.name,
+        s.gender,
+        s.phone,
+        s.address,
+        s.date_of_birth,
+        s.admission_date,
+        s.status,
+        s.academic_year,
+        s.blood_group,
+        s.medical_info,
+        s.transport_required,
+        s.hostel_required,
+        u.email,
+        u.phone as user_phone,
+        u.name as user_name,
+        -- Parent information
+        p.father_name,
+        p.mother_name,
+        p.primary_contact_name,
+        pu.name as parent_name,
+        pu.email as parent_email,
+        pu.phone as parent_phone
+      FROM branch.students s
+      LEFT JOIN public.users u ON s.user_id = u.id
+      LEFT JOIN branch.parent_student_relations psr ON s.id = psr.student_id AND psr.is_primary_contact = true
+      LEFT JOIN branch.parents p ON psr.parent_id = p.id
+      LEFT JOIN public.users pu ON psr.parent_id = pu.id
+      WHERE s.class_id = $1 AND s.status = $2
+      ORDER BY
+        CASE
+          WHEN s.roll_number IS NULL THEN 1
+          ELSE 0
+        END,
+        s.roll_number ASC,
+        s.name ASC
+    `, [classId, 'Active']);
+
+    // Calculate statistics
+    const genderStats = {
+      male: result.rows.filter(s => s.gender === 'Male').length,
+      female: result.rows.filter(s => s.gender === 'Female').length,
+      other: result.rows.filter(s => s.gender && !['Male', 'Female'].includes(s.gender)).length
+    };
+
+    const response = {
+      success: true,
+      data: {
+        class: {
+          id: classData.id,
+          class_name: classData.class_name,
+          grade: classData.grade,
+          standard: classData.standard,
+          capacity: classData.capacity,
+          room_number: classData.room_number,
+          semester: classData.semester,
+          academic_year: classData.academic_year,
+          teacher: {
+            id: classData.teacher_id,
+            name: classData.teacher_name,
+            email: classData.teacher_email
+          }
+        },
+        students: result.rows.map(student => ({
+          id: student.id,
+          student_id: student.student_id,
+          roll_number: student.roll_number,
+          name: student.user_name || student.name,
+          gender: student.gender,
+          phone: student.user_phone || student.phone,
+          email: student.email,
+          address: student.address,
+          date_of_birth: student.date_of_birth,
+          admission_date: student.admission_date,
+          status: student.status,
+          academic_year: student.academic_year,
+          blood_group: student.blood_group,
+          medical_info: student.medical_info,
+          transport_required: student.transport_required,
+          hostel_required: student.hostel_required,
+          parent: {
+            name: student.parent_name || student.primary_contact_name,
+            father_name: student.father_name,
+            mother_name: student.mother_name,
+            email: student.parent_email,
+            phone: student.parent_phone
+          }
+        })),
+        statistics: {
+          total_students: result.rows.length,
+          active_students: result.rows.filter(s => s.status === 'Active').length,
+          gender_distribution: genderStats,
+          with_transport: result.rows.filter(s => s.transport_required === true).length,
+          with_hostel: result.rows.filter(s => s.hostel_required === true).length
+        }
+      }
+    };
+
+    console.log('✅ GET /api/teachers/my-students - Success:', {
+      teacherId: req.user.userid,
+      classId: classData.id,
+      className: classData.class_name,
+      totalStudents: result.rows.length
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/teachers/my-students - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch your students'
+    });
+  }
+});
+
+// GET /api/teachers/:teacherId/class - Get class details for a specific teacher by userid
+router.get('/teachers/:teacherId/class', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/teachers/:teacherId/class - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { teacherId } = req.params;
+    console.log('📋 GET /api/teachers/:teacherId/class - Teacher ID:', teacherId);
+
+    // First verify the teacher exists and has 'teacher' role
+    const teacherCheck = await pool.query(`
+      SELECT u.id, u.userid, u.name, u.email, u.role, u.branch_id
+      FROM public.users u
+      WHERE u.userid = $1 AND u.role = $2
+    `, [teacherId, 'teacher']);
+
+    if (teacherCheck.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/:teacherId/class - Teacher not found:', teacherId);
+      return res.status(404).json({
+        success: false,
+        error: 'Teacher not found with the specified user ID'
+      });
+    }
+
+    const teacher = teacherCheck.rows[0];
+
+    // Get the class where this teacher is assigned
+    const result = await pool.query(`
+      SELECT
+        c.*,
+        tu.name as teacher_name,
+        tu.email as teacher_email
+      FROM branch.classes c
+      LEFT JOIN public.users tu ON c.teacher_id = tu.userid
+      WHERE c.teacher_id = $1
+        AND c.branch_id = $2
+        AND c.status = 'active'
+    `, [teacher.userid, teacher.branch_id]);
+
+    if (result.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/:teacherId/class - No class found for teacher:', teacherId);
+      return res.json({
+        success: true,
+        data: {
+          teacher: {
+            id: teacher.id,
+            userid: teacher.userid,
+            name: teacher.name,
+            email: teacher.email
+          },
+          class_assigned: false,
+          message: 'This teacher is not assigned as a class teacher to any active class'
+        }
+      });
+    }
+
+    const classData = result.rows[0];
+
+    // Get student count for this class
+    const studentCountResult = await pool.query(
+      'SELECT COUNT(*) as count FROM branch.students WHERE class_id = $1 AND status = $2',
+      [classData.id, 'Active']
+    );
+
+    const response = {
+      success: true,
+      data: {
+        teacher: {
+          id: teacher.id,
+          userid: teacher.userid,
+          name: teacher.name,
+          email: teacher.email,
+          branch_id: teacher.branch_id
+        },
+        class_assigned: true,
+        class: {
+          id: classData.id,
+          class_name: classData.class_name,
+          grade: classData.grade,
+          standard: classData.standard,
+          capacity: classData.capacity,
+          room_number: classData.room_number,
+          semester: classData.semester,
+          academic_year: classData.academic_year,
+          schedule: classData.schedule,
+          teacher: {
+            id: classData.teacher_id,
+            name: classData.teacher_name,
+            email: classData.teacher_email
+          }
+        },
+        student_count: parseInt(studentCountResult.rows[0].count)
+      }
+    };
+
+    console.log('✅ GET /api/teachers/:teacherId/class - Success:', {
+      teacherId: teacher.userid,
+      classId: classData.id,
+      className: classData.class_name,
+      studentCount: parseInt(studentCountResult.rows[0].count)
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/teachers/:teacherId/class - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch teacher class information'
+    });
+  }
+});
+
+// GET /api/teachers/:teacherId/students - Get all students in the specified teacher's class
+router.get('/teachers/:teacherId/students', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/teachers/:teacherId/students - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { teacherId } = req.params;
+    console.log('📋 GET /api/teachers/:teacherId/students - Teacher ID:', teacherId);
+
+    // First verify the teacher exists and has 'teacher' role
+    const teacherCheck = await pool.query(`
+      SELECT u.id, u.userid, u.name, u.email, u.role, u.branch_id
+      FROM public.users u
+      WHERE u.userid = $1 AND u.role = $2
+    `, [teacherId, 'teacher']);
+
+    if (teacherCheck.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/:teacherId/students - Teacher not found:', teacherId);
+      return res.status(404).json({
+        success: false,
+        error: 'Teacher not found with the specified user ID'
+      });
+    }
+
+    const teacher = teacherCheck.rows[0];
+
+    // Get the class where this teacher is assigned
+    const classResult = await pool.query(`
+      SELECT
+        c.*,
+        tu.name as teacher_name,
+        tu.email as teacher_email
+      FROM branch.classes c
+      LEFT JOIN public.users tu ON c.teacher_id = tu.userid
+      WHERE c.teacher_id = $1
+        AND c.branch_id = $2
+        AND c.status = 'active'
+    `, [teacher.userid, teacher.branch_id]);
+
+    if (classResult.rows.length === 0) {
+      console.log('⚠️ GET /api/teachers/:teacherId/students - No class found for teacher:', teacherId);
+      return res.json({
+        success: true,
+        data: {
+          teacher: {
+            id: teacher.id,
+            userid: teacher.userid,
+            name: teacher.name,
+            email: teacher.email,
+            branch_id: teacher.branch_id
+          },
+          class_assigned: false,
+          students: [],
+          message: 'This teacher is not assigned as a class teacher to any active class'
+        }
+      });
+    }
+
+    const classData = classResult.rows[0];
+    const classId = classData.id;
+
+    // Get all students in this class
+    const result = await pool.query(`
+      SELECT
+        s.id,
+        s.student_id,
+        s.roll_number,
+        s.name,
+        s.gender,
+        s.phone,
+        s.address,
+        s.date_of_birth,
+        s.admission_date,
+        s.status,
+        s.academic_year,
+        s.blood_group,
+        s.medical_info,
+        s.transport_required,
+        s.hostel_required,
+        u.email,
+        u.phone as user_phone,
+        u.name as user_name,
+        -- Parent information
+        p.father_name,
+        p.mother_name,
+        p.primary_contact_name,
+        pu.name as parent_name,
+        pu.email as parent_email,
+        pu.phone as parent_phone
+      FROM branch.students s
+      LEFT JOIN public.users u ON s.user_id = u.id
+      LEFT JOIN branch.parent_student_relations psr ON s.id = psr.student_id AND psr.is_primary_contact = true
+      LEFT JOIN branch.parents p ON psr.parent_id = p.id
+      LEFT JOIN public.users pu ON psr.parent_id = pu.id
+      WHERE s.class_id = $1 AND s.status = $2
+      ORDER BY
+        CASE
+          WHEN s.roll_number IS NULL THEN 1
+          ELSE 0
+        END,
+        s.roll_number ASC,
+        s.name ASC
+    `, [classId, 'Active']);
+
+    // Calculate statistics
+    const genderStats = {
+      male: result.rows.filter(s => s.gender === 'Male').length,
+      female: result.rows.filter(s => s.gender === 'Female').length,
+      other: result.rows.filter(s => s.gender && !['Male', 'Female'].includes(s.gender)).length
+    };
+
+    const response = {
+      success: true,
+      data: {
+        teacher: {
+          id: teacher.id,
+          userid: teacher.userid,
+          name: teacher.name,
+          email: teacher.email,
+          branch_id: teacher.branch_id
+        },
+        class_assigned: true,
+        class: {
+          id: classData.id,
+          class_name: classData.class_name,
+          grade: classData.grade,
+          standard: classData.standard,
+          capacity: classData.capacity,
+          room_number: classData.room_number,
+          semester: classData.semester,
+          academic_year: classData.academic_year,
+          teacher: {
+            id: classData.teacher_id,
+            name: classData.teacher_name,
+            email: classData.teacher_email
+          }
+        },
+        students: result.rows.map(student => ({
+          id: student.id,
+          student_id: student.student_id,
+          roll_number: student.roll_number,
+          name: student.user_name || student.name,
+          gender: student.gender,
+          phone: student.user_phone || student.phone,
+          email: student.email,
+          address: student.address,
+          date_of_birth: student.date_of_birth,
+          admission_date: student.admission_date,
+          status: student.status,
+          academic_year: student.academic_year,
+          blood_group: student.blood_group,
+          medical_info: student.medical_info,
+          transport_required: student.transport_required,
+          hostel_required: student.hostel_required,
+          parent: {
+            name: student.parent_name || student.primary_contact_name,
+            father_name: student.father_name,
+            mother_name: student.mother_name,
+            email: student.parent_email,
+            phone: student.parent_phone
+          }
+        })),
+        statistics: {
+          total_students: result.rows.length,
+          active_students: result.rows.filter(s => s.status === 'Active').length,
+          gender_distribution: genderStats,
+          with_transport: result.rows.filter(s => s.transport_required === true).length,
+          with_hostel: result.rows.filter(s => s.hostel_required === true).length
+        }
+      }
+    };
+
+    console.log('✅ GET /api/teachers/:teacherId/students - Success:', {
+      teacherId: teacher.userid,
+      classId: classData.id,
+      className: classData.class_name,
+      totalStudents: result.rows.length
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/teachers/:teacherId/students - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch teacher students'
+    });
+  }
+});
+
+// ========== ATTENDANCE MANAGEMENT ENDPOINTS ==========
+
+// POST /api/classes/:id/attendance - Mark daily attendance for entire class
+router.post('/:id/attendance', authenticateToken, async (req, res) => {
+  console.log('🔥 POST /api/classes/:id/attendance - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    body: req.body,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { id: classId } = req.params;
+    const { attendance_date, students, subject } = req.body;
+
+    console.log('📋 POST /api/classes/:id/attendance - Marking attendance:', {
+      classId,
+      attendance_date,
+      subject,
+      studentCount: students?.length || 0
+    });
+
+    // Verify class belongs to user's branch
+    const classCheck = await pool.query(
+      'SELECT id, class_name, teacher_id, academic_year FROM branch.classes WHERE id = $1 AND branch_id = $2',
+      [classId, req.user.branchId]
+    );
+
+    if (classCheck.rows.length === 0) {
+      console.log('⚠️ POST /api/classes/:id/attendance - Class not found:', classId);
+      return res.status(404).json({
+        success: false,
+        error: 'Class not found'
+      });
+    }
+
+    const classData = classCheck.rows[0];
+
+    // Verify user is the class teacher or has admin privileges
+    if (req.user.role === 'teacher' && classData.teacher_id !== req.user.userId) {
+      console.log('⚠️ POST /api/classes/:id/attendance - Access denied for teacher:', {
+        teacherId: req.user.userid,
+        classTeacherId: classData.teacher_id
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. You are not the class teacher.'
+      });
+    }
+
+    // Validate required fields
+    if (!attendance_date) {
+      return res.status(400).json({
+        success: false,
+        error: 'Attendance date is required'
+      });
+    }
+
+    if (!students || !Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Students array is required'
+      });
+    }
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(attendance_date)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid date format. Use YYYY-MM-DD'
+      });
+    }
+
+    // Validate student statuses
+    const validStatuses = ['Present', 'Absent', 'Late'];
+    for (const student of students) {
+      if (!student.student_id || !validStatuses.includes(student.status)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid student data or status for student ${student.student_id}`
+        });
+      }
+    }
+
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      let createdCount = 0;
+      let updatedCount = 0;
+
+      for (const student of students) {
+        // Check if attendance record already exists
+        const existingRecord = await client.query(
+          'SELECT id FROM branch.attendance WHERE student_id = $1 AND attendance_date = $2 AND class_id = $3',
+          [student.student_id, attendance_date, classId]
+        );
+
+        if (existingRecord.rows.length > 0) {
+          // Update existing record
+          await client.query(
+            `UPDATE branch.attendance SET
+              status = $1,
+              subject = $2,
+              remarks = $3,
+              marked_at = NOW(),
+              updated_at = NOW()
+             WHERE id = $4`,
+            [student.status, subject || null, student.remarks || null, existingRecord.rows[0].id]
+          );
+          updatedCount++;
+        } else {
+          // Create new record
+          await client.query(
+            `INSERT INTO branch.attendance (
+              branch_id, student_id, class_id, teacher_id,
+              attendance_date, status, subject, remarks, academic_year
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+              req.user.branchId,
+              student.student_id,
+              classId,
+              req.user.userId,
+              attendance_date,
+              student.status,
+              subject || null,
+              student.remarks || null,
+              classData.academic_year
+            ]
+          );
+          createdCount++;
+        }
+      }
+
+      await client.query('COMMIT');
+
+      const response = {
+        success: true,
+        message: 'Attendance marked successfully',
+        data: {
+          classId,
+          className: classData.class_name,
+          attendance_date,
+          subject: subject || null,
+          created: createdCount,
+          updated: updatedCount,
+          total_processed: students.length
+        }
+      };
+
+      console.log('✅ POST /api/classes/:id/attendance - Success:', {
+        classId,
+        className: classData.class_name,
+        created: createdCount,
+        updated: updatedCount,
+        total: students.length
+      });
+
+      res.status(201).json(response);
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+      console.log('🔴 POST /api/classes/:id/attendance - Transaction error:', dbError);
+      throw dbError;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('❌ POST /api/classes/:id/attendance - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to mark attendance'
+    });
+  }
+});
+
+// GET /api/classes/:id/attendance - View class attendance records
+router.get('/:id/attendance', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/classes/:id/attendance - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    query: req.query,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { id: classId } = req.params;
+    const { start_date, end_date, status, limit = 50, offset = 0 } = req.query;
+
+    console.log('📋 GET /api/classes/:id/attendance - Fetching attendance:', {
+      classId,
+      start_date,
+      end_date,
+      status,
+      limit,
+      offset
+    });
+
+    // Verify class belongs to user's branch
+    const classCheck = await pool.query(
+      'SELECT id, class_name, teacher_id FROM branch.classes WHERE id = $1 AND branch_id = $2',
+      [classId, req.user.branchId]
+    );
+
+    if (classCheck.rows.length === 0) {
+      console.log('⚠️ GET /api/classes/:id/attendance - Class not found:', classId);
+      return res.status(404).json({
+        success: false,
+        error: 'Class not found'
+      });
+    }
+
+    const classData = classCheck.rows[0];
+
+    // Verify access permissions
+    if (req.user.role === 'teacher' && classData.teacher_id !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. You are not the class teacher.'
+      });
+    }
+
+    // Build query with filters
+    let query = `
+      SELECT
+        a.*,
+        s.student_id,
+        s.roll_number,
+        COALESCE(u.name, 'Unknown Student') as student_name,
+        teacher.name as teacher_name
+      FROM branch.attendance a
+      JOIN branch.students s ON a.student_id = s.id
+      LEFT JOIN public.users u ON s.user_id = u.id
+      LEFT JOIN public.users teacher ON a.teacher_id = teacher.id
+      WHERE a.class_id = $1
+    `;
+
+    const queryParams = [classId];
+    let paramIndex = 2;
+
+    // Add date range filters
+    if (start_date) {
+      query += ` AND a.attendance_date >= $${paramIndex}`;
+      queryParams.push(start_date);
+      paramIndex++;
+    }
+
+    if (end_date) {
+      query += ` AND a.attendance_date <= $${paramIndex}`;
+      queryParams.push(end_date);
+      paramIndex++;
+    }
+
+    // Add status filter
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      query += ` AND a.status = $${paramIndex}`;
+      queryParams.push(status);
+      paramIndex++;
+    }
+
+    // Add ordering and pagination
+    query += ` ORDER BY a.attendance_date DESC, s.roll_number ASC`;
+    query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    queryParams.push(parseInt(limit), parseInt(offset));
+
+    const result = await pool.query(query, queryParams);
+
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM branch.attendance a
+      WHERE a.class_id = $1
+    `;
+    const countParams = [classId];
+    let countParamIndex = 2;
+
+    if (start_date) {
+      countQuery += ` AND a.attendance_date >= $${countParamIndex}`;
+      countParams.push(start_date);
+      countParamIndex++;
+    }
+
+    if (end_date) {
+      countQuery += ` AND a.attendance_date <= $${countParamIndex}`;
+      countParams.push(end_date);
+      countParamIndex++;
+    }
+
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      countQuery += ` AND a.status = $${countParamIndex}`;
+      countParams.push(status);
+      countParamIndex++;
+    }
+
+    const countResult = await pool.query(countQuery, countParams);
+    const total = parseInt(countResult.rows[0].total);
+
+    const response = {
+      success: true,
+      data: {
+        class: {
+          id: classData.id,
+          class_name: classData.class_name
+        },
+        attendance_records: result.rows.map(record => ({
+          id: record.id,
+          attendance_date: record.attendance_date,
+          status: record.status,
+          subject: record.subject,
+          remarks: record.remarks,
+          marked_at: record.marked_at,
+          student: {
+            id: record.student_id,
+            student_id: record.student_id,
+            roll_number: record.roll_number,
+            name: record.student_name
+          },
+          teacher: {
+            id: record.teacher_id,
+            name: record.teacher_name
+          }
+        })),
+        pagination: {
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          has_more: total > (parseInt(offset) + parseInt(limit))
+        }
+      }
+    };
+
+    console.log('✅ GET /api/classes/:id/attendance - Success:', {
+      classId,
+      className: classData.class_name,
+      totalRecords: total,
+      returnedRecords: result.rows.length
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/classes/:id/attendance - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch attendance records'
+    });
+  }
+});
+
+// PUT /api/attendance/:id - Update individual attendance record
+router.put('/attendance/:id', authenticateToken, async (req, res) => {
+  console.log('🔥 PUT /api/attendance/:id - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    body: req.body,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { id } = req.params;
+    const { status, remarks, subject } = req.body;
+
+    console.log('📋 PUT /api/attendance/:id - Updating attendance:', {
+      id,
+      status,
+      subject
+    });
+
+    // Check if attendance record exists and belongs to user's branch
+    const existingRecord = await pool.query(`
+      SELECT a.*, c.teacher_id, c.class_name
+      FROM branch.attendance a
+      JOIN branch.classes c ON a.class_id = c.id
+      WHERE a.id = $1 AND a.branch_id = $2
+    `, [id, req.user.branchId]);
+
+    if (existingRecord.rows.length === 0) {
+      console.log('⚠️ PUT /api/attendance/:id - Attendance record not found:', id);
+      return res.status(404).json({
+        success: false,
+        error: 'Attendance record not found'
+      });
+    }
+
+    const recordData = existingRecord.rows[0];
+
+    // Verify access permissions
+    if (req.user.role === 'teacher' && recordData.teacher_id !== req.user.userId) {
+      console.log('⚠️ PUT /api/attendance/:id - Access denied for teacher:', {
+        teacherId: req.user.userid,
+        recordTeacherId: recordData.teacher_id
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. You did not mark this attendance record.'
+      });
+    }
+
+    // Validate required fields
+    if (!status || !['Present', 'Absent', 'Late'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid status (Present, Absent, Late) is required'
+      });
+    }
+
+    // Update attendance record
+    const updateQuery = `
+      UPDATE branch.attendance SET
+        status = $1,
+        remarks = $2,
+        subject = $3,
+        updated_at = NOW()
+      WHERE id = $4 AND branch_id = $5
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, [
+      status,
+      remarks || null,
+      subject || null,
+      id,
+      req.user.branchId
+    ]);
+
+    const updatedRecord = result.rows[0];
+
+    const response = {
+      success: true,
+      data: {
+        id: updatedRecord.id,
+        attendance_date: updatedRecord.attendance_date,
+        status: updatedRecord.status,
+        subject: updatedRecord.subject,
+        remarks: updatedRecord.remarks,
+        marked_at: updatedRecord.marked_at,
+        updated_at: updatedRecord.updated_at
+      },
+      message: 'Attendance record updated successfully'
+    };
+
+    console.log('✅ PUT /api/attendance/:id - Success:', {
+      attendanceId: id,
+      className: recordData.class_name,
+      newStatus: status
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ PUT /api/attendance/:id - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update attendance record'
+    });
+  }
+});
+
+// GET /api/attendance/date/:date - Get attendance for specific date across classes
+router.get('/attendance/date/:date', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/attendance/date/:date - Incoming request:', {
+    headers: req.headers,
+    params: req.params,
+    query: req.query,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const { date } = req.params;
+    const { class_id, status, limit = 100, offset = 0 } = req.query;
+
+    console.log('📋 GET /api/attendance/date/:date - Fetching attendance:', {
+      date,
+      class_id,
+      status,
+      limit,
+      offset
+    });
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid date format. Use YYYY-MM-DD'
+      });
+    }
+
+    // Build query with filters
+    let query = `
+      SELECT
+        a.*,
+        s.student_id,
+        s.roll_number,
+        su.name AS student_name,
+        c.class_name,
+        c.standard,
+        c.grade,
+        u.name AS teacher_name
+      FROM branch.attendance a
+      JOIN branch.students s ON a.student_id = s.id
+      JOIN public.users su ON s.user_id = su.id
+      JOIN branch.classes c ON a.class_id = c.id
+      LEFT JOIN public.users u ON a.teacher_id = u.id
+      WHERE a.attendance_date = $1 AND a.branch_id = $2
+    `;
+
+    const queryParams = [date, req.user.branchId];
+    let paramIndex = 3;
+
+    // Add class filter if provided
+    if (class_id) {
+      query += ` AND a.class_id = $${paramIndex}`;
+      queryParams.push(class_id);
+      paramIndex++;
+    }
+
+    // Add status filter if provided
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      query += ` AND a.status = $${paramIndex}`;
+      queryParams.push(status);
+      paramIndex++;
+    }
+
+    // Add ordering and pagination
+    query += ` ORDER BY c.class_name, s.roll_number ASC`;
+    query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    queryParams.push(parseInt(limit), parseInt(offset));
+
+    const result = await pool.query(query, queryParams);
+
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM branch.attendance a
+      WHERE a.attendance_date = $1 AND a.branch_id = $2
+    `;
+    const countParams = [date, req.user.branchId];
+    let countParamIndex = 3;
+
+    if (class_id) {
+      countQuery += ` AND a.class_id = $${countParamIndex}`;
+      countParams.push(class_id);
+      countParamIndex++;
+    }
+
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      countQuery += ` AND a.status = $${countParamIndex}`;
+      countParams.push(status);
+      countParamIndex++;
+    }
+
+    const countResult = await pool.query(countQuery, countParams);
+    const total = parseInt(countResult.rows[0].total);
+
+    const response = {
+      success: true,
+      data: {
+        attendance_date: date,
+        attendance_records: result.rows.map(record => ({
+          id: record.id,
+          status: record.status,
+          subject: record.subject,
+          remarks: record.remarks,
+          marked_at: record.marked_at,
+          student: {
+            id: record.student_id,
+            student_id: record.student_id,
+            roll_number: record.roll_number,
+            name: record.student_name
+          },
+          class: {
+            id: record.class_id,
+            class_name: record.class_name,
+            standard: record.standard,
+            grade: record.grade
+          },
+          teacher: {
+            id: record.teacher_id,
+            name: record.teacher_name
+          }
+        })),
+        pagination: {
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          has_more: total > (parseInt(offset) + parseInt(limit))
+        },
+        summary: {
+          total_present: result.rows.filter(r => r.status === 'Present').length,
+          total_absent: result.rows.filter(r => r.status === 'Absent').length,
+          total_late: result.rows.filter(r => r.status === 'Late').length
+        }
+      }
+    };
+
+    console.log('✅ GET /api/attendance/date/:date - Success:', {
+      date,
+      totalRecords: total,
+      present: result.rows.filter(r => r.status === 'Present').length,
+      absent: result.rows.filter(r => r.status === 'Absent').length,
+      late: result.rows.filter(r => r.status === 'Late').length
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/attendance/date/:date - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch attendance for date'
     });
   }
 });
