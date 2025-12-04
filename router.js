@@ -1648,32 +1648,21 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
 //     });
 //   }
 // });
-router.get('/teachers/students', authenticateToken, async (req, res) => {
+router.get('/teachers/my-students', authenticateToken, async (req, res) => {
   try {
-    const teacherUUID = req.user.userId;  // UUID
+    const teacherUUID = req.user.userId;  // MUST BE UUID
     const branchId = req.user.branchId;
 
-    // 1. Verify teacher exists
-    const teacher = await pool.query(
-      `SELECT id, userid, name, email 
-       FROM public.users 
-       WHERE id = $1 AND role = 'teacher' AND is_active = true`,
-      [teacherUUID]
-    );
+    console.log("Fetching students for teacher:", teacherUUID);
 
-    if (teacher.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: "Teacher not found"
-      });
-    }
-
-    // 2. Find class assigned to this teacher
-    const classResult = await pool.query(
-      `SELECT * FROM branch.classes 
-       WHERE teacher_id = $1 AND branch_id = $2 AND status = 'Active'`,
-      [teacherUUID, branchId]
-    );
+    // 1. Get class where this teacher is assigned
+    const classResult = await pool.query(`
+      SELECT *
+      FROM branch.classes
+      WHERE teacher_id = $1
+        AND branch_id = $2
+        AND LOWER(status) = 'active'
+    `, [teacherUUID, branchId]);  // USING UUID NOW
 
     if (classResult.rows.length === 0) {
       return res.status(404).json({
@@ -1684,15 +1673,15 @@ router.get('/teachers/students', authenticateToken, async (req, res) => {
 
     const classData = classResult.rows[0];
 
-    // 3. Fetch students of that class
-    const students = await pool.query(
-      `SELECT s.*, u.name AS student_name, u.email AS student_email
-       FROM branch.students s
-       LEFT JOIN public.users u ON u.id = s.user_id
-       WHERE s.class_id = $1 AND s.status = 'Active'
-       ORDER BY s.roll_number ASC`,
-      [classData.id]
-    );
+    // 2. Fetch students of that class
+    const students = await pool.query(`
+      SELECT s.*, u.name AS student_name, u.email AS student_email
+      FROM branch.students s
+      LEFT JOIN public.users u ON u.id = s.user_id
+      WHERE s.class_id = $1 
+        AND LOWER(s.status) = 'active'
+      ORDER BY s.roll_number ASC
+    `, [classData.id]);
 
     return res.json({
       success: true,
@@ -1703,7 +1692,7 @@ router.get('/teachers/students', authenticateToken, async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Teacher students fetch error:", err);
+    console.error("GET /teachers/my-students ERROR:", err);
     res.status(500).json({ success: false, error: "Server error" });
   }
 });
@@ -1718,23 +1707,26 @@ router.get('/teachers/my-class', authenticateToken, requireRole('teacher'), asyn
   });
 
   try {
-    console.log('📋 GET /api/teachers/my-class - Fetching class for teacher:', req.user.userid);
+    // THE ONLY CORRECT VALUE FOR DB QUERY
+    const teacherUUID = req.user.userId;  // UUID ✔
+    const branchId = req.user.branchId;
 
-    // Get the class where this teacher is assigned
+    console.log('📋 Fetching class for teacher UUID:', teacherUUID);
+
     const result = await pool.query(`
       SELECT
         c.*,
-        u.name as teacher_name,
-        u.email as teacher_email
+        u.name AS teacher_name,
+        u.email AS teacher_email
       FROM branch.classes c
       LEFT JOIN public.users u ON c.teacher_id = u.id
       WHERE c.teacher_id = $1
         AND c.branch_id = $2
-        AND c.status = 'active'
-    `, [req.user.userid, req.user.branchId]);
+        AND c.status = 'Active'
+    `, [teacherUUID, branchId]);  // FIX APPLIED ✔
 
     if (result.rows.length === 0) {
-      console.log('⚠️ GET /api/teachers/my-class - No class found for teacher:', req.user.userid);
+      console.log('⚠️ No class found for teacher UUID:', teacherUUID);
       return res.status(404).json({
         success: false,
         error: 'No class assigned to you as a class teacher'
@@ -1743,51 +1735,31 @@ router.get('/teachers/my-class', authenticateToken, requireRole('teacher'), asyn
 
     const classData = result.rows[0];
 
-    // Get student count for this class
+    // Get student count
     const studentCountResult = await pool.query(
       'SELECT COUNT(*) as count FROM branch.students WHERE class_id = $1 AND status = $2',
       [classData.id, 'Active']
     );
 
-    const response = {
+    res.json({
       success: true,
       data: {
-        class: {
-          id: classData.id,
-          class_name: classData.class_name,
-          grade: classData.grade,
-          standard: classData.standard,
-          capacity: classData.capacity,
-          room_number: classData.room_number,
-          semester: classData.semester,
-          academic_year: classData.academic_year,
-          schedule: classData.schedule,
-          teacher: {
-            id: classData.teacher_id,
-            name: classData.teacher_name,
-            email: classData.teacher_email
-          }
-        },
+        class: classData,
         student_count: parseInt(studentCountResult.rows[0].count)
       }
-    };
+    });
 
-    console.log('✅ GET /api/teachers/my-class - Success:', {
-      teacherId: req.user.userid,
+    console.log('✅ Class found:', {
       classId: classData.id,
-      className: classData.class_name,
-      studentCount: parseInt(studentCountResult.rows[0].count)
+      className: classData.class_name
     });
 
-    res.json(response);
   } catch (error) {
-    console.error('❌ GET /api/teachers/my-class - Server error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch your class details'
-    });
+    console.error('❌ Error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to fetch your class details' });
   }
 });
+
 
 // GET /api/teachers/my-students - Get all students in the teacher's assigned class
 router.get('/teachers/my-students', authenticateToken, requireRole('teacher'), async (req, res) => {
