@@ -2870,4 +2870,10 @@ router.get('/attendance/date/:date', authenticateToken, async (req, res) => {
   }
 });
 
+// Import additional router with teacher notification endpoints
+const additionalRouter = require('./router-additional');
+
+// Mount additional routes (note: additionalRouter already includes /teachers/ in its paths)
+router.use('/', additionalRouter);
+
 module.exports = router;
