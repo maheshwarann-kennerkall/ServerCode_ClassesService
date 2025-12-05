@@ -1333,65 +1333,270 @@ router.get('/teachers/all', authenticateToken, async (req, res) => {
 
 
 // GET /api/classes/teachers/:teacherId/timetable - Get teacher's complete timetable
+// router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res) => {
+//   console.log('🔥 GET /api/classes/teachers/:teacherId/timetable - Incoming request:', {
+//     headers: req.headers,
+//     params: req.params,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
+
+//   try {
+//     const { teacherId } = req.params;
+//     console.log('📋 GET /api/classes/teachers/:teacherId/timetable - Teacher ID:', teacherId);
+
+//     // Check access permissions:
+//     // 1. Teacher can see their own timetable
+//     // 2. Admin/Superadmin can see any teacher's timetable
+//     // 3. Students/Parents cannot access teacher timetables
+    
+//     if (req.user.role === 'teacher' && req.user.userid !== teacherId) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Access denied. You can only view your own timetable.'
+//       });
+//     }
+
+//     if (!['admin', 'superadmin', 'teacher'].includes(req.user.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Access denied. Insufficient permissions.'
+//       });
+//     }
+
+//     // Verify teacher exists and belongs to the branch (for non-teachers)
+//     if (req.user.role !== 'teacher') {
+//       // Check if teacherId is UUID format or userid
+//       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+//       let teacherCheck;
+      
+//       if (uuidRegex.test(teacherId)) {
+//         // If it's a UUID, search by id
+//         teacherCheck = await pool.query(`
+//           SELECT id, name FROM public.users
+//           WHERE id = $1 AND role = $2 AND branch_id = $3
+//         `, [teacherId, 'teacher', req.user.branchId]);
+//       } else {
+//         // If it's a userid, search by userid
+//         teacherCheck = await pool.query(`
+//           SELECT id, name FROM public.users
+//           WHERE userid = $1 AND role = $2 AND branch_id = $3
+//         `, [teacherId, 'teacher', req.user.branchId]);
+//       }
+
+//       if (teacherCheck.rows.length === 0) {
+//         console.log('⚠️ GET /api/classes/teachers/:teacherId/timetable - Teacher not found:', teacherId);
+//         return res.status(404).json({
+//           success: false,
+//           error: 'Teacher not found'
+//         });
+//       }
+//     }
+
+//     // Get teacher's complete timetable with class details
+//     const query = `
+//       SELECT
+//         t.*,
+//         c.id as class_id,
+//         c.class_name,
+//         c.standard,
+//         c.grade,
+//         c.room_number,
+//         u.name as teacher_name,
+//         u.email as teacher_email,
+//         -- Day names for better readability
+//         CASE t.day_of_week
+//           WHEN 1 THEN 'Monday'
+//           WHEN 2 THEN 'Tuesday'
+//           WHEN 3 THEN 'Wednesday'
+//           WHEN 4 THEN 'Thursday'
+//           WHEN 5 THEN 'Friday'
+//           WHEN 6 THEN 'Saturday'
+//           WHEN 7 THEN 'Sunday'
+//         END as day_name
+//       FROM branch.timetables t
+//       JOIN branch.classes c ON t.class_id = c.id
+//       LEFT JOIN public.users u ON t.teacher_id = u.id
+//       WHERE t.teacher_id = $1
+//         AND t.branch_id = $2
+//         AND c.status = 'active'
+//       ORDER BY t.day_of_week, t.start_time
+//     `;
+
+//     const result = await pool.query(query, [teacherId, req.user.branchId]);
+
+//     // Group timetable by day for better organization
+//     const timetableByDay = {};
+//     result.rows.forEach(slot => {
+//       const dayKey = slot.day_of_week;
+//       if (!timetableByDay[dayKey]) {
+//         timetableByDay[dayKey] = {
+//           day_name: slot.day_name,
+//           day_of_week: slot.day_of_week,
+//           slots: []
+//         };
+//       }
+//       timetableByDay[dayKey].slots.push({
+//         id: slot.id,
+//         subject: slot.subject,
+//         start_time: slot.start_time,
+//         end_time: slot.end_time,
+//         room_number: slot.room_number,
+//         class: {
+//           id: slot.class_id,
+//           class_name: slot.class_name,
+//           standard: slot.standard,
+//           grade: slot.grade
+//         }
+//       });
+//     });
+
+//     // Convert to array and sort by day
+//     const organizedTimetable = Object.values(timetableByDay)
+//       .sort((a, b) => a.day_of_week - b.day_of_week);
+
+//     // Get teacher's basic info
+//     const teacherInfo = await pool.query(`
+//       SELECT
+//         u.id,
+//         u.name,
+//         u.email,
+//         u.phone,
+//         t.department,
+//         t.subjects
+//       FROM public.users u
+//       LEFT JOIN branch.teachers t ON u.id = t.user_id
+//       WHERE u.id = $1 AND u.role = 'teacher'
+//     `, [teacherId]);
+
+//     const response = {
+//       success: true,
+//       data: {
+//         teacher: teacherInfo.rows[0] || null,
+//         timetable: organizedTimetable,
+//         total_slots: result.rows.length,
+//         teaching_days: organizedTimetable.length
+//       }
+//     };
+
+//     console.log('✅ GET /api/classes/teachers/:teacherId/timetable - Success:', {
+//       teacherId,
+//       totalSlots: result.rows.length,
+//       teachingDays: organizedTimetable.length
+//     });
+
+//     res.json(response);
+//   } catch (error) {
+//     console.error('❌ GET /api/classes/teachers/:teacherId/timetable - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to fetch teacher timetable'
+//     });
+//   }
+// });
+// Helper: Resolve teacher UUID from either userid or UUID
+async function resolveTeacherUUID(inputId, branchId) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  // If already UUID
+  if (uuidRegex.test(inputId)) return inputId;
+
+  // Otherwise treat as userid (BRANCHINGT001)
+  const result = await pool.query(`
+    SELECT id FROM public.users
+    WHERE userid = $1 AND role = 'teacher' AND branch_id = $2
+  `, [inputId, branchId]);
+
+  return result.rows.length ? result.rows[0].id : null;
+}
+
+
+
+// ------------------------------------------------------------------
+// 📌 FINAL ENDPOINT
+// ------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Helper: Convert teacherId (UUID or userid) → UUID
+// ---------------------------------------------------------------------
+async function resolveTeacherId(inputId, branchId) {
+  const uuidPattern = /^[0-9a-fA-F-]{36}$/;
+
+  // If it's already UUID → return as-is
+  if (uuidPattern.test(inputId)) {
+    return inputId;
+  }
+
+  // Otherwise look up by userid
+  const result = await pool.query(
+    `SELECT id FROM public.users 
+     WHERE userid = $1 AND role = 'teacher' AND branch_id = $2`,
+    [inputId, branchId]
+  );
+
+  return result.rows.length ? result.rows[0].id : null;
+}
+
+
+
+// ---------------------------------------------------------------------
+// ✔ FINAL ENDPOINT — Works with BOTH UUID and userid input
+// ---------------------------------------------------------------------
 router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res) => {
-  console.log('🔥 GET /api/classes/teachers/:teacherId/timetable - Incoming request:', {
-    headers: req.headers,
+  console.log("🔥 GET /api/classes/teachers/:teacherId/timetable", {
     params: req.params,
-    user: req.user,
-    timestamp: new Date().toISOString()
+    user: req.user
   });
 
   try {
-    const { teacherId } = req.params;
-    console.log('📋 GET /api/classes/teachers/:teacherId/timetable - Teacher ID:', teacherId);
+    const branchId = req.user.branchId;
+    let { teacherId } = req.params;
 
-    // Check access permissions:
-    // 1. Teacher can see their own timetable
-    // 2. Admin/Superadmin can see any teacher's timetable
-    // 3. Students/Parents cannot access teacher timetables
-    
-    if (req.user.role === 'teacher' && req.user.userid !== teacherId) {
-      return res.status(403).json({
+    // ---------------------------------------------------------------
+    // Case 1: Teacher accessing THEIR OWN timetable
+    // ---------------------------------------------------------------
+    if (req.user.role === "teacher") {
+      teacherId = req.user.userId;  // Force UUID from token
+    }
+
+    // ---------------------------------------------------------------
+    // Convert incoming teacherId into UUID  
+    // ---------------------------------------------------------------
+    const teacherUUID = await resolveTeacherId(teacherId, branchId);
+
+    if (!teacherUUID) {
+      return res.status(404).json({
         success: false,
-        error: 'Access denied. You can only view your own timetable.'
+        error: "Teacher not found"
       });
     }
 
-    if (!['admin', 'superadmin', 'teacher'].includes(req.user.role)) {
+    // ---------------------------------------------------------------
+    // Access control  
+    // Teacher can only access their own timetable
+    // ---------------------------------------------------------------
+    if (req.user.role === "teacher" && req.user.userId !== teacherUUID) {
       return res.status(403).json({
         success: false,
-        error: 'Access denied. Insufficient permissions.'
+        error: "Access denied. You can only view your own timetable."
       });
     }
 
-    // Verify teacher exists and belongs to the branch (for non-teachers)
-    if (req.user.role !== 'teacher') {
-      const teacherCheck = await pool.query(`
-        SELECT id, name FROM public.users
-        WHERE userid = $1 AND role = $2 AND branch_id = $3
-      `, [teacherId, 'teacher', req.user.branchId]);
+    // Admin / superadmin can view any teacher’s timetable — allowed.
 
-      if (teacherCheck.rows.length === 0) {
-        console.log('⚠️ GET /api/classes/teachers/:teacherId/timetable - Teacher not found:', teacherId);
-        return res.status(404).json({
-          success: false,
-          error: 'Teacher not found'
-        });
-      }
-    }
 
-    // Get teacher's complete timetable with class details
-    const query = `
+    // ---------------------------------------------------------------
+    // Fetch timetable
+    // ---------------------------------------------------------------
+    const timetableQuery = `
       SELECT
         t.*,
-        c.id as class_id,
+        c.id AS class_id,
         c.class_name,
         c.standard,
         c.grade,
         c.room_number,
-        u.name as teacher_name,
-        u.email as teacher_email,
-        -- Day names for better readability
+        u.name AS teacher_name,
+        u.email AS teacher_email,
         CASE t.day_of_week
           WHEN 1 THEN 'Monday'
           WHEN 2 THEN 'Tuesday'
@@ -1399,31 +1604,29 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
           WHEN 4 THEN 'Thursday'
           WHEN 5 THEN 'Friday'
           WHEN 6 THEN 'Saturday'
-          WHEN 7 THEN 'Sunday'
-        END as day_name
+        END AS day_name
       FROM branch.timetables t
       JOIN branch.classes c ON t.class_id = c.id
       LEFT JOIN public.users u ON t.teacher_id = u.id
-      WHERE u.userid = $1
+      WHERE t.teacher_id = $1
         AND t.branch_id = $2
-        AND c.status = 'active'
+        AND c.status = 'Active'
       ORDER BY t.day_of_week, t.start_time
     `;
 
-    const result = await pool.query(query, [teacherId, req.user.branchId]);
+    const slots = await pool.query(timetableQuery, [teacherUUID, branchId]);
 
-    // Group timetable by day for better organization
-    const timetableByDay = {};
-    result.rows.forEach(slot => {
-      const dayKey = slot.day_of_week;
-      if (!timetableByDay[dayKey]) {
-        timetableByDay[dayKey] = {
-          day_name: slot.day_name,
+    // Group by day
+    const grouped = {};
+    slots.rows.forEach(slot => {
+      if (!grouped[slot.day_of_week]) {
+        grouped[slot.day_of_week] = {
           day_of_week: slot.day_of_week,
+          day_name: slot.day_name,
           slots: []
         };
       }
-      timetableByDay[dayKey].slots.push({
+      grouped[slot.day_of_week].slots.push({
         id: slot.id,
         subject: slot.subject,
         start_time: slot.start_time,
@@ -1438,49 +1641,111 @@ router.get('/teachers/:teacherId/timetable', authenticateToken, async (req, res)
       });
     });
 
-    // Convert to array and sort by day
-    const organizedTimetable = Object.values(timetableByDay)
+    const timetable = Object.values(grouped)
       .sort((a, b) => a.day_of_week - b.day_of_week);
 
-    // Get teacher's basic info
+    // Teacher info
     const teacherInfo = await pool.query(`
-      SELECT
-        u.id,
-        u.name,
-        u.email,
-        u.phone,
-        t.department,
-        t.subjects
-      FROM public.users u
-      LEFT JOIN branch.teachers t ON u.id = t.user_id
-      WHERE u.userid = $1 AND u.role = 'teacher'
-    `, [teacherId]);
+      SELECT id, name, email, userid 
+      FROM public.users 
+      WHERE id = $1
+    `, [teacherUUID]);
 
-    const response = {
+    res.json({
       success: true,
       data: {
-        teacher: teacherInfo.rows[0] || null,
-        timetable: organizedTimetable,
-        total_slots: result.rows.length,
-        teaching_days: organizedTimetable.length
+        teacher: teacherInfo.rows[0],
+        timetable,
+        total_slots: slots.rows.length,
+        teaching_days: timetable.length
       }
-    };
-
-    console.log('✅ GET /api/classes/teachers/:teacherId/timetable - Success:', {
-      teacherId,
-      totalSlots: result.rows.length,
-      teachingDays: organizedTimetable.length
     });
 
-    res.json(response);
   } catch (error) {
-    console.error('❌ GET /api/classes/teachers/:teacherId/timetable - Server error:', error.message);
+    console.error("❌ TIMETABLE ERROR:", error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch teacher timetable'
+      error: "Failed to fetch teacher timetable"
     });
   }
 });
+
+// GET /api/teachers/my-timetable
+router.get('/teachers/my-timetable', authenticateToken, requireRole('teacher'), async (req, res) => {
+  try {
+    const teacherUuid = req.user.userId; // UUID from token
+    const branchId = req.user.branchId;
+
+    console.log('🔥 GET /api/teachers/my-timetable - teacherUuid:', teacherUuid);
+
+    // Verify teacher exists
+    const teacherCheck = await pool.query(
+      `SELECT id, name, email, phone FROM public.users WHERE id = $1 AND role = 'teacher' AND branch_id = $2`,
+      [teacherUuid, branchId]
+    );
+    if (teacherCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Teacher not found' });
+    }
+    const teacherInfo = teacherCheck.rows[0];
+
+    // Fetch timetable (same query as above)
+    const slotsRes = await pool.query(`
+      SELECT
+        t.id,
+        t.day_of_week,
+        t.start_time,
+        t.end_time,
+        t.subject,
+        t.room_number,
+        t.class_id,
+        c.class_name,
+        c.standard,
+        c.grade,
+        CASE t.day_of_week
+          WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday' WHEN 3 THEN 'Wednesday'
+          WHEN 4 THEN 'Thursday' WHEN 5 THEN 'Friday' WHEN 6 THEN 'Saturday' WHEN 7 THEN 'Sunday'
+        END as day_name
+      FROM branch.timetables t
+      JOIN branch.classes c ON t.class_id = c.id
+      WHERE t.teacher_id = $1
+        AND t.branch_id = $2
+        AND LOWER(c.status) = 'active'
+      ORDER BY t.day_of_week, t.start_time
+    `, [teacherUuid, branchId]);
+
+    const timetableByDay = {};
+    slotsRes.rows.forEach(slot => {
+      const dow = slot.day_of_week || 0;
+      if (!timetableByDay[dow]) {
+        timetableByDay[dow] = { day_of_week: dow, day_name: slot.day_name, slots: [] };
+      }
+      timetableByDay[dow].slots.push({
+        id: slot.id,
+        subject: slot.subject,
+        start_time: slot.start_time,
+        end_time: slot.end_time,
+        room_number: slot.room_number,
+        class: { id: slot.class_id, class_name: slot.class_name, standard: slot.standard, grade: slot.grade }
+      });
+    });
+
+    const organized = Object.values(timetableByDay).sort((a,b) => a.day_of_week - b.day_of_week);
+
+    res.json({
+      success: true,
+      data: {
+        teacher: teacherInfo,
+        timetable: organized,
+        total_slots: slotsRes.rows.length,
+        teaching_days: organized.length
+      }
+    });
+  } catch (err) {
+    console.error('❌ GET /teachers/my-timetable - Error', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch your timetable' });
+  }
+});
+
 
 // GET /api/classes/:id/students - Get students in a class (for class teachers)
 // router.get('/:id/students', authenticateToken, async (req, res) => {
