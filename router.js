@@ -544,9 +544,100 @@ router.put('/:id', authenticateToken, validateClassData, async (req, res) => {
 });
 
 // DELETE /api/classes/:id - Delete class
-router.delete('/:id', authenticateToken,  async (req, res) => {
+// router.delete('/:id', authenticateToken,  async (req, res) => {
+//   console.log('🔥 DELETE /api/classes/:id - Incoming request:', {
+//     headers: req.headers,
+//     params: req.params,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
+
+//   try {
+//     const { id } = req.params;
+//     console.log('📋 DELETE /api/classes/:id - Deleting class:', id);
+
+//     // Check if class exists and belongs to user's branch
+//     const existingClass = await pool.query(
+//       'SELECT * FROM branch.classes WHERE id = $1 AND branch_id = $2',
+//       [id, req.user.branchId]
+//     );
+
+//     if (existingClass.rows.length === 0) {
+//       console.log('⚠️ DELETE /api/classes/:id - Class not found:', id);
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Class not found'
+//       });
+//     }
+
+//     const classData = existingClass.rows[0];
+
+//     // Check if class has students enrolled
+//     const studentsCheck = await pool.query(
+//       'SELECT COUNT(*) as count FROM public.students WHERE class_id = $1 AND status = $2',
+//       [id, 'Active']
+//     );
+
+//     if (parseInt(studentsCheck.rows[0].count) > 0) {
+//       console.log('⚠️ DELETE /api/classes/:id - Class has students:', id);
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Cannot delete class with enrolled students. Please move students to another class first.'
+//       });
+//     }
+
+//     // Check if class has timetable entries
+//     const timetableCheck = await pool.query(
+//       'SELECT COUNT(*) as count FROM branch.timetables WHERE class_id = $1',
+//       [id]
+//     );
+
+//     if (parseInt(timetableCheck.rows[0].count) > 0) {
+//       console.log('⚠️ DELETE /api/classes/:id - Class has timetable entries:', id);
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Cannot delete class with timetable entries. Please delete timetable entries first.'
+//       });
+//     }
+
+//     // Delete class
+//     const deleteResult = await pool.query(
+//       'DELETE FROM branch.classes WHERE id = $1 AND branch_id = $2',
+//       [id, req.user.branchId]
+//     );
+
+//     if (deleteResult.rowCount === 0) {
+//       console.log('⚠️ DELETE /api/classes/:id - No rows affected:', id);
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Class not found'
+//       });
+//     }
+
+//     const response = {
+//       success: true,
+//       message: 'Class deleted successfully'
+//     };
+
+//     console.log('✅ DELETE /api/classes/:id - Class deleted successfully:', {
+//       classId: id,
+//       className: classData.class_name
+//     });
+
+//     res.json(response);
+//   } catch (error) {
+//     console.error('❌ DELETE /api/classes/:id - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to delete class'
+//     });
+//   }
+// });
+
+// GET /api/classes/:id/timetable - Get class timetable
+
+router.delete('/:id', authenticateToken, async (req, res) => {
   console.log('🔥 DELETE /api/classes/:id - Incoming request:', {
-    headers: req.headers,
     params: req.params,
     user: req.user,
     timestamp: new Date().toISOString()
@@ -554,16 +645,17 @@ router.delete('/:id', authenticateToken,  async (req, res) => {
 
   try {
     const { id } = req.params;
-    console.log('📋 DELETE /api/classes/:id - Deleting class:', id);
 
-    // Check if class exists and belongs to user's branch
+    console.log('📋 Deleting class:', id);
+
+    // 1️⃣ Check if class exists in this branch
     const existingClass = await pool.query(
-      'SELECT * FROM branch.classes WHERE id = $1 AND branch_id = $2',
+      `SELECT * FROM branch.classes WHERE id = $1 AND branch_id = $2`,
       [id, req.user.branchId]
     );
 
     if (existingClass.rows.length === 0) {
-      console.log('⚠️ DELETE /api/classes/:id - Class not found:', id);
+      console.log('⚠️ Class not found:', id);
       return res.status(404).json({
         success: false,
         error: 'Class not found'
@@ -572,69 +664,71 @@ router.delete('/:id', authenticateToken,  async (req, res) => {
 
     const classData = existingClass.rows[0];
 
-    // Check if class has students enrolled
+    // 2️⃣ Check if students are enrolled in this class
     const studentsCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM public.students WHERE class_id = $1 AND status = $2',
-      [id, 'Active']
+      `SELECT COUNT(*) AS count 
+       FROM branch.students 
+       WHERE class_id = $1 AND status = 'Active'`,
+      [id]
     );
 
     if (parseInt(studentsCheck.rows[0].count) > 0) {
-      console.log('⚠️ DELETE /api/classes/:id - Class has students:', id);
+      console.log('⚠️ Class has active students:', id);
       return res.status(400).json({
         success: false,
-        error: 'Cannot delete class with enrolled students. Please move students to another class first.'
+        error: 'Cannot delete class with enrolled students. Move students to another class first.'
       });
     }
 
-    // Check if class has timetable entries
+    // 3️⃣ Check for timetable entries
     const timetableCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM branch.timetables WHERE class_id = $1',
+      `SELECT COUNT(*) AS count 
+       FROM branch.timetables 
+       WHERE class_id = $1`,
       [id]
     );
 
     if (parseInt(timetableCheck.rows[0].count) > 0) {
-      console.log('⚠️ DELETE /api/classes/:id - Class has timetable entries:', id);
+      console.log('⚠️ Class has timetable entries:', id);
       return res.status(400).json({
         success: false,
-        error: 'Cannot delete class with timetable entries. Please delete timetable entries first.'
+        error: 'Cannot delete class with timetable entries. Delete timetable entries first.'
       });
     }
 
-    // Delete class
+    // 4️⃣ Delete class
     const deleteResult = await pool.query(
-      'DELETE FROM branch.classes WHERE id = $1 AND branch_id = $2',
+      `DELETE FROM branch.classes WHERE id = $1 AND branch_id = $2`,
       [id, req.user.branchId]
     );
 
     if (deleteResult.rowCount === 0) {
-      console.log('⚠️ DELETE /api/classes/:id - No rows affected:', id);
       return res.status(404).json({
         success: false,
-        error: 'Class not found'
+        error: 'Class not found or not deleted'
       });
     }
 
-    const response = {
-      success: true,
-      message: 'Class deleted successfully'
-    };
-
-    console.log('✅ DELETE /api/classes/:id - Class deleted successfully:', {
+    console.log('✅ Class deleted:', {
       classId: id,
       className: classData.class_name
     });
 
-    res.json(response);
+    return res.json({
+      success: true,
+      message: 'Class deleted successfully'
+    });
+
   } catch (error) {
-    console.error('❌ DELETE /api/classes/:id - Server error:', error.message);
-    res.status(500).json({
+    console.error('❌ DELETE /api/classes/:id - Server error:', error);
+    return res.status(500).json({
       success: false,
-      error: 'Failed to delete class'
+      error: 'Failed to delete class',
+      details: error.message
     });
   }
 });
 
-// GET /api/classes/:id/timetable - Get class timetable
 router.get('/:id/timetable', authenticateToken, async (req, res) => {
   console.log('🔥 GET /api/classes/:id/timetable - Incoming request:', {
     headers: req.headers,
