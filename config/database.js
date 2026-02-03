@@ -12,11 +12,10 @@ const pool = new Pool({
   max: 20,
   min: 2,
   idleTimeoutMillis: 60000,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 15000,
   statement_timeout: 30000,
   query_timeout: 30000,
   keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
   ssl: {
     rejectUnauthorized: false,
     servername: process.env.DB_HOST || 'localhost'
@@ -31,6 +30,14 @@ pool.on('connect', () => {
 pool.on('error', (err) => {
   console.error('❌ ClassesService: Database connection error:', err);
   process.exit(-1);
+});
+
+pool.on('acquire', () => {
+  console.log('🔄 ClassesService: Connection acquired from pool');
+});
+
+pool.on('release', () => {
+  console.log('🔄 ClassesService: Connection released back to pool');
 });
 
 module.exports = pool;

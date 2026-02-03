@@ -1,0 +1,19 @@
+[dotenv@17.2.3] injecting env (11) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 📡 add observability to secrets: https://dotenvx.com/ops
+🚀 ClassesService running on port 8004
+🔌 WebSocket server available at ws://localhost:8004/ws
+🔥 GET /api/academic-years/active - Incoming request: {
+  headers: {
+    accept: '*/*',
+    'content-type': 'application/json',
+    authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI5MDVlN2VkYi01YWM5LTQ3ZTYtOWRkNy03ZGM3MTkwOTgxMTYiLCJ1c2VyaWQiOiJCQkJCQTAwMDAwMSIsInJvbGUiOiJhZG1pbiIsImJyYW5jaElkIjoiMjcxM2FjNzQtNmYyMC00ZmNmLThkMmUtYWFhZTk3YTNkYmEzIiwiYnJhbmNoTmFtZSI6ImJyYW5jaGluZyIsImVtYWlsIjoiQkJCQkEwMDAwMDFAZWltcy5lZHUiLCJpYXQiOjE3NjkzNDc1MzksImV4cCI6MTc2OTQzMzkzOX0.4maJO1tIcAz0uMtn3uZglLD0VzV01oDxaW1pF5y4odw',
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+    'accept-encoding': 'gzip, compress, deflate, br',
+    host: 'localhost:8004',
+    connection: 'keep-alive'
+  },
+  timestamp: '2026-01-26T09:58:36.442Z'
+}
+📋 GET /api/academic-years/active - Fetching active academic year
+📊 ClassesService: Connected to PostgreSQL database
+✅ GET /api/academic-years/active - Active academic year retrieved: { yearName: '2026-2027' }

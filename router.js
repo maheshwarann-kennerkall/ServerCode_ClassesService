@@ -53,7 +53,7 @@ const requireRole = (...allowedRoles) => {
 // Validation middleware
 const validateClassData = (req, res, next) => {
   const { class_name, grade, standard, teacher_id, semester, capacity, room_number, schedule, academic_year } = req.body;
-  
+
   if (!class_name || !class_name.trim()) {
     return res.status(400).json({
       success: false,
@@ -264,7 +264,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
   try {
     const { branchId, academic_year, limit = 50, offset = 0 } = req.query;
-    
+
     console.log('📋 GET /api/classes - Query params:', { branchId, academic_year, limit, offset });
 
     // Build dynamic query based on filters
@@ -350,16 +350,16 @@ router.post('/', authenticateToken, validateClassData, async (req, res) => {
   });
 
   try {
-    const { 
-      class_name, 
-      grade, 
-      standard, 
-      teacher_id, 
-      semester, 
-      capacity, 
-      room_number, 
-      schedule, 
-      academic_year 
+    const {
+      class_name,
+      grade,
+      standard,
+      teacher_id,
+      semester,
+      capacity,
+      room_number,
+      schedule,
+      academic_year
     } = req.body;
 
     console.log('✅ POST /api/classes - Creating class:', {
@@ -443,7 +443,7 @@ router.post('/', authenticateToken, validateClassData, async (req, res) => {
         'SELECT name, email FROM public.users WHERE id = $1',
         [newClass.teacher_id]
       );
-      
+
       if (teacherResult.rows.length > 0) {
         newClass.teacher = teacherResult.rows[0];
       }
@@ -471,6 +471,57 @@ router.post('/', authenticateToken, validateClassData, async (req, res) => {
   }
 });
 
+// GET /api/academic-years/active - Get active academic year (no role restrictions)
+router.get('/academic-years/active', async (req, res) => {
+  console.log('🔥 GET /api/academic-years/active - Incoming request:', {
+    headers: req.headers,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    console.log('📋 GET /api/academic-years/active - Fetching active academic year');
+
+    // Get the active academic year
+    const result = await pool.query(`
+      SELECT
+        id,
+        year_name,
+        status,
+        start_date,
+        end_date
+      FROM public.academic_years
+      WHERE status = 'active'
+      ORDER BY start_date DESC
+      LIMIT 1
+    `);
+
+    if (result.rows.length === 0) {
+      console.log('⚠️ GET /api/academic-years/active - No active academic year found');
+      return res.status(404).json({
+        success: false,
+        error: 'No active academic year found'
+      });
+    }
+
+    const response = {
+      success: true,
+      data: result.rows[0]
+    };
+
+    console.log('✅ GET /api/academic-years/active - Active academic year retrieved:', {
+      yearName: result.rows[0].year_name
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/academic-years/active - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch active academic year'
+    });
+  }
+});
+
 // GET /api/academic-years - Get active academic years (no role restrictions)
 router.get('/academic-years', async (req, res) => {
   console.log('🔥 GET /api/academic-years - Incoming request:', {
@@ -484,7 +535,7 @@ router.get('/academic-years', async (req, res) => {
     // Get all academic years with status 'active' and 'upcoming', prioritizing active ones
     const result = await pool.query(`
       SELECT
-        year_name as id,
+        id,
         year_name,
         status,
         start_date,
@@ -511,6 +562,57 @@ router.get('/academic-years', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch academic years'
+    });
+  }
+});
+
+// GET /api/academic-years/all - Get ALL academic years from database (no status filtering)
+router.get('/academic-years/all', async (req, res) => {
+  console.log('🔥 GET /api/academic-years/all - Incoming request:', {
+    headers: req.headers,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    console.log('📋 GET /api/academic-years/all - Fetching ALL academic years from database');
+
+    // Get ALL academic years regardless of status
+    const result = await pool.query(`
+      SELECT
+        id,
+        year_name,
+        status,
+        start_date,
+        end_date,
+        branch_id,
+        semester_config,
+        created_at,
+        updated_at
+      FROM public.academic_years
+      ORDER BY start_date DESC
+    `);
+
+    const response = {
+      success: true,
+      data: result.rows,
+      total_count: result.rows.length
+    };
+
+    console.log('✅ GET /api/academic-years/all - All academic years retrieved:', {
+      totalYears: result.rows.length,
+      statusBreakdown: {
+        active: result.rows.filter(year => year.status === 'active').length,
+        upcoming: result.rows.filter(year => year.status === 'upcoming').length,
+        completed: result.rows.filter(year => year.status === 'completed').length
+      }
+    });
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ GET /api/academic-years/all - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch all academic years'
     });
   }
 });
@@ -1664,6 +1766,94 @@ router.delete('/syllabus/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// ========== STUDENT TIMETABLE ENDPOINT ==========
+
+// GET /api/my-timetable - Fetch timetable for the logged-in student's class
+// GET /api/my-timetable - Fetch timetable for the logged-in student's class
+// GET /api/my-timetable - Fetch timetable for the logged-in student's class
+router.get('/my-timetable', authenticateToken, async (req, res) => {
+  try {
+    const { userId, branchId } = req.user;
+
+    /* 1️⃣ Get student's class */
+    const studentClassQuery = `
+      SELECT c.id AS class_id, c.class_name
+      FROM branch.students s
+      JOIN branch.classes c ON c.id = s.class_id
+      WHERE s.user_id = $1
+        AND s.branch_id = $2::uuid
+        AND s.status = 'Active'
+    `;
+
+    const studentRes = await pool.query(studentClassQuery, [
+      userId,
+      branchId,
+    ]);
+
+    if (!studentRes.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Student not assigned to any active class',
+      });
+    }
+
+    const { class_id, class_name } = studentRes.rows[0];
+
+    /* 2️⃣ Get timetable from master */
+    const timetableQuery = `
+      SELECT time_slots, days, timetable_data, academic_year
+      FROM branch.timetables_master
+      WHERE class_name = $1
+        AND branch_id = $2::uuid
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    const timetableRes = await pool.query(timetableQuery, [
+      class_name,
+      branchId,
+    ]);
+
+    if (!timetableRes.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Timetable not created for this class',
+      });
+    }
+
+    const timetable = timetableRes.rows[0];
+
+    /* 3️⃣ Build clean day → slot response */
+    const formattedTimetable = {};
+
+    timetable.days.forEach((day) => {
+      formattedTimetable[day] = {};
+
+      timetable.time_slots.forEach((slot) => {
+        formattedTimetable[day][slot] =
+          timetable.timetable_data?.[day]?.[slot] || null;
+      });
+    });
+
+    /* 4️⃣ Final response */
+    res.json({
+      success: true,
+      data: {
+        class_id,
+        class_name,
+        academic_year: timetable.academic_year,
+        timetable: formattedTimetable,
+      },
+    });
+  } catch (error) {
+    console.error('❌ MY TIMETABLE ERROR:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch timetable',
+    });
+  }
+});
+
 // ========== COMPLETE TIMETABLE MANAGEMENT ENDPOINTS ==========
 
 // GET /api/timetables/:id - Fetch specific timetable (must come before /:id route)
@@ -2019,9 +2209,10 @@ router.post('/timetables', authenticateToken, async (req, res) => {
   });
 
   try {
-    const { class_name, time_slots, days, timetable_data } = req.body;
+    const { class_id, class_name, time_slots, days, timetable_data } = req.body;
 
     console.log('📋 POST /api/timetables - Creating timetable:', {
+      class_id,
       class_name,
       timeSlotsCount: time_slots?.length || 0,
       daysCount: days?.length || 0
@@ -2057,10 +2248,19 @@ router.post('/timetables', authenticateToken, async (req, res) => {
     }
 
     // Check if timetable for this class already exists
-    const existingTimetable = await pool.query(
-      'SELECT id FROM branch.timetables_master WHERE class_name = $1 AND branch_id = $2::uuid',
-      [class_name, req.user.branchId]
-    );
+    // Use class_id for check if available, otherwise check class_name
+    let existingTimetable;
+    if (class_id) {
+      existingTimetable = await pool.query(
+        'SELECT id FROM branch.timetables_master WHERE class_id = $1 AND branch_id = $2::uuid',
+        [class_id, req.user.branchId]
+      );
+    } else {
+      existingTimetable = await pool.query(
+        'SELECT id FROM branch.timetables_master WHERE class_name = $1 AND branch_id = $2::uuid',
+        [class_name, req.user.branchId]
+      );
+    }
 
     if (existingTimetable.rows.length > 0) {
       return res.status(409).json({
@@ -2082,12 +2282,13 @@ router.post('/timetables', authenticateToken, async (req, res) => {
     // Insert new timetable
     const insertQuery = `
       INSERT INTO branch.timetables_master (
-        class_name, time_slots, days, timetable_data, branch_id, academic_year, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        class_id, class_name, time_slots, days, timetable_data, branch_id, academic_year, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
 
     const result = await pool.query(insertQuery, [
+      class_id || null, // Allow null if frontend doesn't send it yet (backward compatibility)
       class_name,
       JSON.stringify(time_slots),
       JSON.stringify(days),
@@ -2103,6 +2304,7 @@ router.post('/timetables', authenticateToken, async (req, res) => {
       success: true,
       data: {
         id: newTimetable.id,
+        class_id: newTimetable.class_id,
         class_name: newTimetable.class_name,
         time_slots: newTimetable.time_slots,
         days: newTimetable.days,
@@ -2199,10 +2401,11 @@ router.put('/timetables/:id', authenticateToken, async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { class_name, time_slots, days, timetable_data } = req.body;
+    const { class_id, class_name, time_slots, days, timetable_data } = req.body;
 
     console.log('📋 PUT /api/timetables/:id - Updating timetable:', {
       id,
+      class_id,
       class_name,
       timeSlotsCount: time_slots?.length || 0
     });
@@ -2250,17 +2453,25 @@ router.put('/timetables/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check for duplicate class name if changing
-    if (class_name && class_name !== existingTimetable.rows[0].class_name) {
-      const duplicateCheck = await pool.query(
-        'SELECT id FROM branch.timetables_master WHERE class_name = $1 AND branch_id = $2::uuid AND id != $3',
-        [class_name, req.user.branchId, id]
-      );
+    // Checking for duplicates (excluding current one)
+    if (class_id || class_name) {
+      let duplicateCheck;
+      if (class_id) {
+        duplicateCheck = await pool.query(
+          'SELECT id FROM branch.timetables_master WHERE class_id = $1 AND branch_id = $2::uuid AND id != $3',
+          [class_id, req.user.branchId, id]
+        );
+      } else {
+        duplicateCheck = await pool.query(
+          'SELECT id FROM branch.timetables_master WHERE class_name = $1 AND branch_id = $2::uuid AND id != $3',
+          [class_name, req.user.branchId, id]
+        );
+      }
 
       if (duplicateCheck.rows.length > 0) {
         return res.status(409).json({
           success: false,
-          error: 'Timetable for this class already exists'
+          error: 'Another timetable for this class already exists'
         });
       }
     }
@@ -2269,6 +2480,12 @@ router.put('/timetables/:id', authenticateToken, async (req, res) => {
     const updateFields = [];
     const updateValues = [];
     let paramIndex = 1;
+
+    if (class_id) {
+      updateFields.push(`class_id = $${paramIndex}`);
+      updateValues.push(class_id);
+      paramIndex++;
+    }
 
     if (class_name) {
       updateFields.push(`class_name = $${paramIndex}`);
@@ -2474,16 +2691,16 @@ router.put('/:id', authenticateToken, validateClassData, async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { 
-      class_name, 
-      grade, 
-      standard, 
-      teacher_id, 
-      semester, 
-      capacity, 
-      room_number, 
-      schedule, 
-      academic_year 
+    const {
+      class_name,
+      grade,
+      standard,
+      teacher_id,
+      semester,
+      capacity,
+      room_number,
+      schedule,
+      academic_year
     } = req.body;
 
     console.log('📋 PUT /api/classes/:id - Updating class:', { id, class_name, standard });
@@ -2587,7 +2804,7 @@ router.put('/:id', authenticateToken, validateClassData, async (req, res) => {
         'SELECT name, email FROM public.users WHERE id = $1',
         [updatedClass.teacher_id]
       );
-      
+
       if (teacherResult.rows.length > 0) {
         updatedClass.teacher = teacherResult.rows[0];
       }
@@ -3193,7 +3410,7 @@ router.put('/timetable/:id', authenticateToken, async (req, res) => {
 });
 
 // DELETE /api/timetable/:id - Delete timetable slot
-router.delete('/timetable/:id', authenticateToken,  async (req, res) => {
+router.delete('/timetable/:id', authenticateToken, async (req, res) => {
   console.log('🔥 DELETE /api/timetable/:id - Incoming request:', {
     headers: req.headers,
     params: req.params,
@@ -3407,7 +3624,7 @@ router.get('/teachers/available', authenticateToken, async (req, res) => {
 
   try {
     const { academic_year } = req.query;
-    
+
     console.log('📋 GET /api/teachers/available - Fetching available teachers');
 
     // Build query for available teachers
@@ -3514,7 +3731,7 @@ router.get('/teachers/all', authenticateToken, async (req, res) => {
 //     // 1. Teacher can see their own timetable
 //     // 2. Admin/Superadmin can see any teacher's timetable
 //     // 3. Students/Parents cannot access teacher timetables
-    
+
 //     if (req.user.role === 'teacher' && req.user.userid !== teacherId) {
 //       return res.status(403).json({
 //         success: false,
@@ -3534,7 +3751,7 @@ router.get('/teachers/all', authenticateToken, async (req, res) => {
 //       // Check if teacherId is UUID format or userid
 //       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 //       let teacherCheck;
-      
+
 //       if (uuidRegex.test(teacherId)) {
 //         // If it's a UUID, search by id
 //         teacherCheck = await pool.query(`
@@ -3894,7 +4111,7 @@ router.get('/teachers/my-timetable', authenticateToken, requireRole('teacher'), 
       });
     });
 
-    const organized = Object.values(timetableByDay).sort((a,b) => a.day_of_week - b.day_of_week);
+    const organized = Object.values(timetableByDay).sort((a, b) => a.day_of_week - b.day_of_week);
 
     res.json({
       success: true,
@@ -5197,6 +5414,177 @@ router.get('/attendance/date/:date', authenticateToken, async (req, res) => {
     });
   }
 });
+
+router.get('/:classId/students/:studentId/attendance', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/classes/:classId/students/:studentId/attendance', {
+    params: req.params,
+    query: req.query,
+    user: req.user
+  });
+
+  try {
+    const { classId, studentId } = req.params;
+    const { start_date, end_date, status, limit = 50, offset = 0 } = req.query;
+
+    /* 1️⃣ Verify class belongs to branch */
+    const classCheck = await pool.query(
+      `
+        SELECT id, class_name, teacher_id
+        FROM branch.classes
+        WHERE id = $1 AND branch_id = $2::uuid
+        `,
+      [classId, req.user.branchId]
+    );
+
+    if (!classCheck.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Class not found'
+      });
+    }
+
+    const classData = classCheck.rows[0];
+
+    /* 2️⃣ Permission check (teacher only for own class) */
+    if (
+      req.user.role === 'teacher' &&
+      classData.teacher_id !== req.user.userId
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    /* 3️⃣ Verify student belongs to this class */
+    const studentCheck = await pool.query(
+      `
+        SELECT s.id, s.roll_number, u.name
+        FROM branch.students s
+        LEFT JOIN public.users u ON s.user_id = u.id
+        WHERE s.id = $1
+          AND s.class_id = $2
+          AND s.branch_id = $3::uuid
+          AND s.status = 'Active'
+        `,
+      [studentId, classId, req.user.branchId]
+    );
+
+    if (!studentCheck.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Student not found in this class'
+      });
+    }
+
+    const student = studentCheck.rows[0];
+
+    /* 4️⃣ Build attendance query */
+    let query = `
+        SELECT a.*
+        FROM branch.attendance a
+        WHERE a.class_id = $1
+          AND a.student_id = $2
+      `;
+
+    const params = [classId, studentId];
+    let idx = 3;
+
+    if (start_date) {
+      query += ` AND a.attendance_date >= $${idx}`;
+      params.push(start_date);
+      idx++;
+    }
+
+    if (end_date) {
+      query += ` AND a.attendance_date <= $${idx}`;
+      params.push(end_date);
+      idx++;
+    }
+
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      query += ` AND a.status = $${idx}`;
+      params.push(status);
+      idx++;
+    }
+
+    query += ` ORDER BY a.attendance_date DESC`;
+    query += ` LIMIT $${idx} OFFSET $${idx + 1}`;
+    params.push(parseInt(limit), parseInt(offset));
+
+    const attendanceRes = await pool.query(query, params);
+
+    /* 5️⃣ Count total */
+    let countQuery = `
+        SELECT COUNT(*) AS total
+        FROM branch.attendance a
+        WHERE a.class_id = $1
+          AND a.student_id = $2
+      `;
+
+    const countParams = [classId, studentId];
+    let cidx = 3;
+
+    if (start_date) {
+      countQuery += ` AND a.attendance_date >= $${cidx}`;
+      countParams.push(start_date);
+      cidx++;
+    }
+
+    if (end_date) {
+      countQuery += ` AND a.attendance_date <= $${cidx}`;
+      countParams.push(end_date);
+      cidx++;
+    }
+
+    if (status && ['Present', 'Absent', 'Late'].includes(status)) {
+      countQuery += ` AND a.status = $${cidx}`;
+      countParams.push(status);
+      cidx++;
+    }
+
+    const countRes = await pool.query(countQuery, countParams);
+    const total = parseInt(countRes.rows[0].total);
+
+    /* 6️⃣ Final response */
+    res.json({
+      success: true,
+      data: {
+        class: {
+          id: classData.id,
+          class_name: classData.class_name
+        },
+        student: {
+          id: student.id,
+          roll_number: student.roll_number,
+          name: student.name
+        },
+        attendance_records: attendanceRes.rows.map(r => ({
+          id: r.id,
+          attendance_date: r.attendance_date,
+          status: r.status,
+          subject: r.subject,
+          remarks: r.remarks,
+          marked_at: r.marked_at
+        })),
+        pagination: {
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          has_more: total > (parseInt(offset) + parseInt(limit))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Student attendance error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch student attendance'
+    });
+  }
+}
+);
+
 
 // Import additional router with teacher notification endpoints
 const additionalRouter = require('./router-additional');
