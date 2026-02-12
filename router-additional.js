@@ -26,6 +26,7 @@ const authenticateToken = (req, res, next) => {
       });
     }
     req.user = user;
+    console.log('✅ Auth Token Verified. User:', { id: user.id, role: user.role, branchId: user.branchId });
     next();
   });
 };
@@ -40,7 +41,10 @@ const requireRole = (...allowedRoles) => {
       });
     }
 
+    console.log(`🛡️ Checking Role Access. Required: [${allowedRoles.join(', ')}], User Role: '${req.user.role}'`);
+
     if (!allowedRoles.includes(req.user.role)) {
+      console.warn(`⛔ Access Denied: Role '${req.user.role}' not in [${allowedRoles.join(', ')}]`);
       return res.status(403).json({
         success: false,
         error: `Access denied. Required roles: ${allowedRoles.join(', ')}`
@@ -54,7 +58,7 @@ const requireRole = (...allowedRoles) => {
 // Validation middleware
 const validateClassData = (req, res, next) => {
   const { class_name, grade, standard, teacher_id, semester, capacity, room_number, schedule, academic_year } = req.body;
-  
+
   if (!class_name || !class_name.trim()) {
     return res.status(400).json({
       success: false,
@@ -637,7 +641,7 @@ router.get('/teachers/available', authenticateToken, async (req, res) => {
 
   try {
     const { academic_year } = req.query;
-    
+
     console.log('📋 GET /api/teachers/available - Fetching available teachers');
 
     // Build query for available teachers
@@ -1224,7 +1228,7 @@ router.get('/teachers/my-notifications', authenticateToken, requireRole('teacher
           total_deliveries: parseInt(notification.total_deliveries),
           read_count: parseInt(notification.read_count),
           sent_count: parseInt(notification.sent_count),
-          read_rate: notification.total_deliveries > 0 ? 
+          read_rate: notification.total_deliveries > 0 ?
             Math.round((parseInt(notification.read_count) / parseInt(notification.total_deliveries)) * 100) : 0
         }
       })),
@@ -1408,7 +1412,7 @@ router.get('/teachers/eligibility', authenticateToken, requireRole('teacher'), a
       success: true,
       data: {
         is_eligible: isEligible,
-        eligibility_message: isEligible 
+        eligibility_message: isEligible
           ? 'You are eligible to send notifications to your students'
           : 'You are not eligible to send notifications. You must be a class teacher or teaching at least one subject.',
         eligible_classes: eligibilityResult.rows.map(row => ({
@@ -1441,6 +1445,171 @@ router.get('/teachers/eligibility', authenticateToken, requireRole('teacher'), a
     res.status(500).json({
       success: false,
       error: 'Failed to check teacher eligibility'
+    });
+  }
+});
+
+// ========== STUDENT NOTIFICATION ENDPOINTS ==========
+
+// GET /api/classes/students/my-notifications - Get notifications for logged-in student
+router.get('/students/my-notifications', authenticateToken, requireRole('student', 'parent'), async (req, res) => {
+  console.log('🔥 GET /api/classes/students/my-notifications - Incoming request:', {
+    headers: req.headers,
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    let studentUserUUID;
+
+    // Determine target student based on role
+    if (req.user.role === 'parent') {
+      const { student_id } = req.query;
+      if (!student_id) {
+        return res.status(400).json({
+          success: false,
+          error: 'student_id is required for parent role'
+        });
+      }
+      studentUserUUID = student_id;
+    } else {
+      // For students, use their own ID
+      studentUserUUID = req.user.userId;
+    }
+
+    const { limit = 20, offset = 0 } = req.query;
+
+    console.log('📋 GET /api/classes/students/my-notifications - Fetching for:', studentUserUUID);
+
+    const query = `
+      SELECT 
+        n.id,
+        n.title,
+        n.content,
+        n.priority,
+        n.publish_date,
+        n.created_by,
+        u.name as teacher_name,
+        nd.status as read_status,
+        nd.status as read_status
+      FROM notices n
+      JOIN notice_deliveries nd ON n.id = nd.notice_id
+      LEFT JOIN public.users u ON n.created_by = u.id
+      WHERE nd.user_id = $1
+        AND n.branch_id = $2
+        AND n.status = 'published'
+      ORDER BY n.publish_date DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const result = await pool.query(query, [
+      studentUserUUID,
+      req.user.branchId,
+      parseInt(limit),
+      parseInt(offset)
+    ]);
+
+    // Get unread count
+    const unreadCountResult = await pool.query(
+      `SELECT COUNT(*) as count 
+       FROM notice_deliveries nd
+       JOIN notices n ON nd.notice_id = n.id
+       WHERE nd.user_id = $1 
+         AND n.branch_id = $2
+         AND n.status = 'published'
+         AND nd.status != 'read'`,
+      [studentUserUUID, req.user.branchId]
+    );
+
+    const response = {
+      success: true,
+      data: result.rows.map(row => ({
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        priority: row.priority,
+        date: row.publish_date,
+        sender: row.teacher_name || 'Teacher',
+        read: row.read_status === 'read'
+      })),
+      meta: {
+        unread_count: parseInt(unreadCountResult.rows[0].count),
+        total: result.rows.length, // approximation for current page
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      }
+    };
+
+    console.log(`✅ Found ${result.rows.length} notifications for student ${studentUserUUID}`);
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ GET /api/classes/students/my-notifications - Server error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch notifications'
+    });
+  }
+});
+
+// PUT /api/classes/students/notifications/:id/read - Mark notification as read
+router.put('/students/notifications/:id/read', authenticateToken, requireRole('student', 'parent'), async (req, res) => {
+  console.log('🔥 PUT /api/classes/students/notifications/:id/read - Incoming request:', {
+    params: req.params,
+    user: req.user,
+    body: req.body
+  });
+
+  try {
+    const { id } = req.params;
+    let studentUserUUID;
+
+    // Determine target student based on role
+    if (req.user.role === 'parent') {
+      const { student_id } = req.body; // Expect in body for PUT
+      if (!student_id) {
+        // Fallback to query param if not in body
+        if (req.query.student_id) {
+          studentUserUUID = req.query.student_id;
+        } else {
+          return res.status(400).json({
+            success: false,
+            error: 'student_id is required for parent role'
+          });
+        }
+      } else {
+        studentUserUUID = student_id;
+      }
+    } else {
+      studentUserUUID = req.user.userId;
+    }
+
+    const result = await pool.query(
+      `UPDATE notice_deliveries 
+       SET status = 'read'
+       WHERE notice_id = $1 AND user_id = $2
+       RETURNING *`,
+      [id, studentUserUUID]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Notification not found or access denied'
+      });
+    }
+
+    console.log(`✅ Marked notification ${id} as read for student ${studentUserUUID}`);
+    res.json({
+      success: true,
+      message: 'Notification marked as read'
+    });
+
+  } catch (error) {
+    console.error('❌ PUT /api/classes/students/notifications/:id/read - Server error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update notification status'
     });
   }
 });

@@ -9,12 +9,12 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'school_management',
   password: process.env.DB_PASSWORD || 'ubuntu',
   port: process.env.DB_PORT || 5432,
-  max: 20,
+  max: 2,
   min: 2,
   idleTimeoutMillis: 60000,
-  connectionTimeoutMillis: 15000,
-  statement_timeout: 30000,
-  query_timeout: 30000,
+  connectionTimeoutMillis: 60000,
+  statement_timeout: 60000,
+  query_timeout: 60000,
   keepAlive: true,
   ssl: {
     rejectUnauthorized: false,
@@ -29,7 +29,6 @@ pool.on('connect', () => {
 
 pool.on('error', (err) => {
   console.error('❌ ClassesService: Database connection error:', err);
-  process.exit(-1);
 });
 
 pool.on('acquire', () => {

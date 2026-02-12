@@ -567,16 +567,59 @@ router.get('/academic-years', async (req, res) => {
 });
 
 // GET /api/academic-years/all - Get ALL academic years from database (no status filtering)
-router.get('/academic-years/all', async (req, res) => {
-  console.log('🔥 GET /api/academic-years/all - Incoming request:', {
-    headers: req.headers,
-    timestamp: new Date().toISOString()
-  });
+// router.get('/academic-years/all', async (req, res) => {
+//   console.log('🔥 GET /api/academic-years/all - Incoming request:', {
+//     headers: req.headers,
+//     timestamp: new Date().toISOString()
+//   });
 
+//   try {
+//     console.log('📋 GET /api/academic-years/all - Fetching ALL academic years from database');
+
+//     // Get ALL academic years regardless of status
+//     const result = await pool.query(`
+//       SELECT
+//         id,
+//         year_name,
+//         status,
+//         start_date,
+//         end_date,
+//         branch_id,
+//         semester_config,
+//         created_at,
+//         updated_at
+//       FROM public.academic_years
+//       ORDER BY start_date DESC
+//     `);
+
+//     const response = {
+//       success: true,
+//       data: result.rows,
+//       total_count: result.rows.length
+//     };
+
+//     console.log('✅ GET /api/academic-years/all - All academic years retrieved:', {
+//       totalYears: result.rows.length,
+//       statusBreakdown: {
+//         active: result.rows.filter(year => year.status === 'active').length,
+//         upcoming: result.rows.filter(year => year.status === 'upcoming').length,
+//         completed: result.rows.filter(year => year.status === 'completed').length
+//       }
+//     });
+
+//     res.json(response);
+//   } catch (error) {
+//     console.error('❌ GET /api/academic-years/all - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to fetch all academic years'
+//     });
+//   }
+// });
+router.get('/academic-years/all', authenticateToken, async (req, res) => {
   try {
-    console.log('📋 GET /api/academic-years/all - Fetching ALL academic years from database');
+    const branchId = req.user.branchId; // ✅ from token
 
-    // Get ALL academic years regardless of status
     const result = await pool.query(`
       SELECT
         id,
@@ -589,150 +632,273 @@ router.get('/academic-years/all', async (req, res) => {
         created_at,
         updated_at
       FROM public.academic_years
+      WHERE branch_id = $1
       ORDER BY start_date DESC
-    `);
+    `, [branchId]);
 
-    const response = {
+    res.json({
       success: true,
       data: result.rows,
       total_count: result.rows.length
-    };
-
-    console.log('✅ GET /api/academic-years/all - All academic years retrieved:', {
-      totalYears: result.rows.length,
-      statusBreakdown: {
-        active: result.rows.filter(year => year.status === 'active').length,
-        upcoming: result.rows.filter(year => year.status === 'upcoming').length,
-        completed: result.rows.filter(year => year.status === 'completed').length
-      }
     });
 
-    res.json(response);
   } catch (error) {
-    console.error('❌ GET /api/academic-years/all - Server error:', error.message);
+    console.error('❌ Academic years fetch failed:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch all academic years'
+      error: 'Failed to fetch academic years'
     });
   }
 });
+
 
 // POST /api/academic-years - Create new academic year
-router.post('/academic-years', authenticateToken, requireRole('admin', 'superadmin'), async (req, res) => {
-  console.log('🔥 POST /api/academic-years - Incoming request:', {
-    headers: req.headers,
-    body: req.body,
-    user: req.user,
-    timestamp: new Date().toISOString()
-  });
+// router.post('/academic-years', authenticateToken, requireRole('admin', 'superadmin'), async (req, res) => {
+//   console.log('🔥 POST /api/academic-years - Incoming request:', {
+//     headers: req.headers,
+//     body: req.body,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
 
-  try {
-    const { year_name, start_date, end_date, status } = req.body;
+//   try {
+//     const { year_name, start_date, end_date, status } = req.body;
 
-    console.log('📋 POST /api/academic-years - Creating academic year:', {
-      year_name,
-      start_date,
-      end_date,
-      status
+//     console.log('📋 POST /api/academic-years - Creating academic year:', {
+//       year_name,
+//       start_date,
+//       end_date,
+//       status
+//     });
+
+//     // Validate required fields
+//     if (!year_name || !start_date || !end_date || !status) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'year_name, start_date, end_date, and status are required'
+//       });
+//     }
+
+//     // Validate status values
+//     if (!['upcoming', 'active', 'completed'].includes(status)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Status must be one of: upcoming, active, completed'
+//       });
+//     }
+
+//     // Validate date format and logic
+//     if (new Date(start_date) >= new Date(end_date)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'End date must be after start date'
+//       });
+//     }
+
+//     // Check for existing academic year with same name
+//     const existingYear = await pool.query(
+//       'SELECT id FROM public.academic_years WHERE year_name = $1',
+//       [year_name]
+//     );
+
+//     if (existingYear.rows.length > 0) {
+//       console.log('⚠️ POST /api/academic-years - Academic year already exists:', year_name);
+//       return res.status(409).json({
+//         success: false,
+//         error: 'Academic year with this name already exists'
+//       });
+//     }
+
+//     // Check for existing years with same status (only one active/upcoming allowed)
+//     if (status === 'active' || status === 'upcoming') {
+//       const existingStatusYear = await pool.query(
+//         'SELECT id FROM public.academic_years WHERE status = $1',
+//         [status]
+//       );
+
+//       if (existingStatusYear.rows.length > 0) {
+//         console.log('⚠️ POST /api/academic-years - Academic year with status already exists:', status);
+//         return res.status(409).json({
+//           success: false,
+//           error: `An academic year with status '${status}' already exists. Only one ${status} academic year is allowed.`
+//         });
+//       }
+//     }
+
+//     // Create the academic year
+//     const result = await pool.query(`
+//       INSERT INTO public.academic_years (year_name, start_date, end_date, status, semester_config, branch_id)
+//       VALUES ($1, $2, $3, $4, $5, $6)
+//       RETURNING *
+//     `, [
+//       year_name,
+//       start_date,
+//       end_date,
+//       status,
+//       JSON.stringify({ year_start: start_date, year_end: end_date }),
+//       status === 'active' ? req.user.branchId : null
+//     ]);
+
+//     const newAcademicYear = result.rows[0];
+
+//     const response = {
+//       success: true,
+//       data: {
+//         id: newAcademicYear.year_name,
+//         year_name: newAcademicYear.year_name,
+//         start_date: newAcademicYear.start_date,
+//         end_date: newAcademicYear.end_date,
+//         status: newAcademicYear.status
+//       },
+//       message: 'Academic year created successfully'
+//     };
+
+//     console.log('✅ POST /api/academic-years - Academic year created:', {
+//       yearName: year_name,
+//       status: status,
+//       id: newAcademicYear.year_name
+//     });
+
+//     res.status(201).json(response);
+//   } catch (error) {
+//     console.error('❌ POST /api/academic-years - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to create academic year'
+//     });
+//   }
+// });
+
+router.post(
+  '/academic-years',
+  authenticateToken,
+  requireRole('admin', 'superadmin'),
+  async (req, res) => {
+    console.log('🔥 POST /api/academic-years', {
+      body: req.body,
+      user: req.user,
+      time: new Date().toISOString()
     });
 
-    // Validate required fields
-    if (!year_name || !start_date || !end_date || !status) {
-      return res.status(400).json({
-        success: false,
-        error: 'year_name, start_date, end_date, and status are required'
-      });
-    }
+    try {
+      const { year_name, start_date, end_date, status } = req.body;
+      const branchId = req.user.branchId;
 
-    // Validate status values
-    if (!['upcoming', 'active', 'completed'].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Status must be one of: upcoming, active, completed'
-      });
-    }
-
-    // Validate date format and logic
-    if (new Date(start_date) >= new Date(end_date)) {
-      return res.status(400).json({
-        success: false,
-        error: 'End date must be after start date'
-      });
-    }
-
-    // Check for existing academic year with same name
-    const existingYear = await pool.query(
-      'SELECT id FROM public.academic_years WHERE year_name = $1',
-      [year_name]
-    );
-
-    if (existingYear.rows.length > 0) {
-      console.log('⚠️ POST /api/academic-years - Academic year already exists:', year_name);
-      return res.status(409).json({
-        success: false,
-        error: 'Academic year with this name already exists'
-      });
-    }
-
-    // Check for existing years with same status (only one active/upcoming allowed)
-    if (status === 'active' || status === 'upcoming') {
-      const existingStatusYear = await pool.query(
-        'SELECT id FROM public.academic_years WHERE status = $1',
-        [status]
-      );
-
-      if (existingStatusYear.rows.length > 0) {
-        console.log('⚠️ POST /api/academic-years - Academic year with status already exists:', status);
-        return res.status(409).json({
+      /* -------------------- Basic validations -------------------- */
+      if (!year_name || !start_date || !end_date || !status) {
+        return res.status(400).json({
           success: false,
-          error: `An academic year with status '${status}' already exists. Only one ${status} academic year is allowed.`
+          error: 'year_name, start_date, end_date, and status are required'
         });
       }
+
+      if (!['upcoming', 'active', 'completed'].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Status must be upcoming, active, or completed'
+        });
+      }
+
+      if (new Date(start_date) >= new Date(end_date)) {
+        return res.status(400).json({
+          success: false,
+          error: 'End date must be after start date'
+        });
+      }
+
+      /* -------------------- Per-branch duplicate check -------------------- */
+      const duplicateYear = await pool.query(
+        `
+        SELECT 1
+        FROM public.academic_years
+        WHERE year_name = $1
+          AND branch_id = $2
+        `,
+        [year_name, branchId]
+      );
+
+      if (duplicateYear.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'Academic year already exists for this branch'
+        });
+      }
+
+      /* -------------------- One active year per branch -------------------- */
+      if (status === 'active') {
+        const activeYear = await pool.query(
+          `
+          SELECT 1
+          FROM public.academic_years
+          WHERE status = 'active'
+            AND branch_id = $1
+          `,
+          [branchId]
+        );
+
+        if (activeYear.rows.length > 0) {
+          return res.status(409).json({
+            success: false,
+            error: 'An active academic year already exists for this branch'
+          });
+        }
+      }
+
+      /* -------------------- Insert academic year -------------------- */
+      const insertResult = await pool.query(
+        `
+        INSERT INTO public.academic_years
+          (year_name, start_date, end_date, status, semester_config, branch_id)
+        VALUES
+          ($1, $2, $3, $4, $5, $6)
+        RETURNING
+          id, year_name, start_date, end_date, status, branch_id, created_at
+        `,
+        [
+          year_name,
+          start_date,
+          end_date,
+          status,
+          {
+            year_start: start_date,
+            year_end: end_date
+          },
+          branchId
+        ]
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: 'Academic year created successfully',
+        data: insertResult.rows[0]
+      });
+
+    } catch (error) {
+      console.error('❌ Create academic year failed:', error);
+
+      /* ---------- Handle DB constraint errors gracefully ---------- */
+      if (error.code === '23505') {
+        return res.status(409).json({
+          success: false,
+          error: 'Academic year conflict for this branch'
+        });
+      }
+
+      if (error.code === '23514') {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid academic year data'
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create academic year'
+      });
     }
-
-    // Create the academic year
-    const result = await pool.query(`
-      INSERT INTO public.academic_years (year_name, start_date, end_date, status, semester_config, branch_id)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `, [
-      year_name,
-      start_date,
-      end_date,
-      status,
-      JSON.stringify({ year_start: start_date, year_end: end_date }),
-      status === 'active' ? req.user.branchId : null
-    ]);
-
-    const newAcademicYear = result.rows[0];
-
-    const response = {
-      success: true,
-      data: {
-        id: newAcademicYear.year_name,
-        year_name: newAcademicYear.year_name,
-        start_date: newAcademicYear.start_date,
-        end_date: newAcademicYear.end_date,
-        status: newAcademicYear.status
-      },
-      message: 'Academic year created successfully'
-    };
-
-    console.log('✅ POST /api/academic-years - Academic year created:', {
-      yearName: year_name,
-      status: status,
-      id: newAcademicYear.year_name
-    });
-
-    res.status(201).json(response);
-  } catch (error) {
-    console.error('❌ POST /api/academic-years - Server error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create academic year'
-    });
   }
-});
+);
+
 
 // PUT /api/academic-years/:id - Update academic year
 // router.put('/academic-years/:id', authenticateToken, requireRole('admin', 'superadmin'), async (req, res) => {
@@ -2199,6 +2365,117 @@ router.get('/timetables', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/timetables/teacher/:teacher_id - Fetch detailed timetable for a specific teacher
+router.get('/timetables/teacher/:teacher_id', authenticateToken, async (req, res) => {
+  console.log('🔥 GET /api/timetables/teacher/:teacher_id - Incoming request:', {
+    teacherId: req.params.teacher_id,
+    query: req.query,
+    user: req.user
+  });
+
+  try {
+    const { teacher_id } = req.params;
+    let { academic_year } = req.query;
+
+    if (!teacher_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Teacher ID is required'
+      });
+    }
+
+    // Default to current academic year if not provided
+    if (!academic_year) {
+      const academicYearResult = await pool.query(
+        'SELECT year_name FROM public.academic_years WHERE status = $1 ORDER BY start_date DESC LIMIT 1',
+        ['active']
+      );
+      academic_year = academicYearResult.rows.length > 0
+        ? academicYearResult.rows[0].year_name
+        : new Date().getFullYear() + '-' + (new Date().getFullYear() + 1);
+    }
+
+    // Fetch all timetables for the branch and academic year
+    // We fetch ALL because we need to parse the JSONB data to find the teacher
+    const query = `
+      SELECT class_id, class_name, days, time_slots, timetable_data 
+      FROM branch.timetables_master
+      WHERE branch_id = $1 AND academic_year = $2
+    `;
+
+    const result = await pool.query(query, [req.user.branchId, academic_year]);
+    const allTimetables = result.rows;
+
+    console.log(`📋 Processing ${allTimetables.length} timetables for teacher ${teacher_id}`);
+
+    // Fetch teacher details to check for name-based legacy matches
+    const teacherResult = await pool.query('SELECT name FROM public.users WHERE id = $1', [teacher_id]);
+    const teacherName = teacherResult.rows[0]?.name;
+
+    const teacherSlots = [];
+
+    // Iterate through all timetables to find slots for this teacher
+    for (const timetable of allTimetables) {
+      const { class_id, class_name, timetable_data } = timetable;
+
+      if (!timetable_data) continue;
+
+      // Check each day
+      for (const day of Object.keys(timetable_data)) {
+        const dayData = timetable_data[day];
+        if (!dayData) continue;
+
+        // Check each time slot
+        for (const timeSlot of Object.keys(dayData)) {
+          const slot = dayData[timeSlot];
+
+          if (!slot || !slot.faculty) continue;
+
+          // Check for match:
+          // 1. Direct match with UUID (new system)
+          // 2. Match with teacher Name (legacy system)
+          const isMatch = (slot.faculty === teacher_id) || (teacherName && slot.faculty === teacherName);
+
+          if (isMatch) {
+            teacherSlots.push({
+              class_id,
+              class_name, // Include class name for display
+              day,
+              time_slot: timeSlot,
+              subject: slot.subject,
+              room_number: slot.room_number || null // Assuming room might be added later or exist
+            });
+          }
+        }
+      }
+    }
+
+    // Sort the results? Maybe by day then time? 
+    // For now, returning list as is.
+
+    const response = {
+      success: true,
+      data: teacherSlots,
+      teacher_id,
+      academic_year,
+      total_slots: teacherSlots.length
+    };
+
+    console.log('✅ GET /api/timetables/teacher/:teacher_id - Success:', {
+      returnedSlots: teacherSlots.length
+    });
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ GET /api/timetables/teacher/:teacher_id - Server error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch teacher timetable'
+    });
+  }
+});
+
 // POST /api/timetables - Create new complete timetable
 router.post('/timetables', authenticateToken, async (req, res) => {
   console.log('🔥 POST /api/timetables - Incoming request:', {
@@ -2219,10 +2496,11 @@ router.post('/timetables', authenticateToken, async (req, res) => {
     });
 
     // Validate required fields
-    if (!class_name || !class_name.trim()) {
+    // If class_id is present, we can look up class_name. If not, class_name is required.
+    if (!class_id && (!class_name || !class_name.trim())) {
       return res.status(400).json({
         success: false,
-        error: 'class_name is required'
+        error: 'class_id or class_name is required'
       });
     }
 
@@ -2245,6 +2523,23 @@ router.post('/timetables', authenticateToken, async (req, res) => {
         success: false,
         error: 'timetable_data must be an object'
       });
+    }
+
+    // Lookup class_name if missing but class_id provided
+    let finalClassName = class_name;
+    if (class_id && (!class_name || !class_name.trim())) {
+      const classLookup = await pool.query(
+        'SELECT class_name FROM branch.classes WHERE id = $1 AND branch_id = $2::uuid',
+        [class_id, req.user.branchId]
+      );
+      if (classLookup.rows.length > 0) {
+        finalClassName = classLookup.rows[0].class_name;
+      } else {
+        return res.status(404).json({
+          success: false,
+          error: 'Invalid class_id'
+        });
+      }
     }
 
     // Check if timetable for this class already exists
@@ -2288,8 +2583,8 @@ router.post('/timetables', authenticateToken, async (req, res) => {
     `;
 
     const result = await pool.query(insertQuery, [
-      class_id || null, // Allow null if frontend doesn't send it yet (backward compatibility)
-      class_name,
+      class_id || null,
+      finalClassName,
       JSON.stringify(time_slots),
       JSON.stringify(days),
       JSON.stringify(timetable_data),
@@ -2424,12 +2719,16 @@ router.put('/timetables/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    // Validate required fields if provided
-    if (class_name && !class_name.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'class_name cannot be empty'
-      });
+    // Lookup class_name if missing but class_id provided (for new name if changing)
+    let finalClassName = class_name;
+    if (class_id && (!class_name || !class_name.trim())) {
+      const classLookup = await pool.query(
+        'SELECT class_name FROM branch.classes WHERE id = $1 AND branch_id = $2::uuid',
+        [class_id, req.user.branchId]
+      );
+      if (classLookup.rows.length > 0) {
+        finalClassName = classLookup.rows[0].class_name;
+      }
     }
 
     if (time_slots && (!Array.isArray(time_slots) || time_slots.length === 0)) {
@@ -2487,9 +2786,9 @@ router.put('/timetables/:id', authenticateToken, async (req, res) => {
       paramIndex++;
     }
 
-    if (class_name) {
+    if (finalClassName) {
       updateFields.push(`class_name = $${paramIndex}`);
-      updateValues.push(class_name);
+      updateValues.push(finalClassName);
       paramIndex++;
     }
 
@@ -3075,175 +3374,175 @@ router.get('/:id/timetable', authenticateToken, async (req, res) => {
 });
 
 // POST /api/classes/:id/timetable - Add timetable slot
-router.post('/:id/timetable', authenticateToken, async (req, res) => {
-  console.log('🔥 POST /api/classes/:id/timetable - Incoming request:', {
-    headers: req.headers,
-    params: req.params,
-    body: req.body,
-    user: req.user,
-    timestamp: new Date().toISOString()
-  });
+// router.post('/:id/timetable', authenticateToken, async (req, res) => {
+//   console.log('🔥 POST /api/classes/:id/timetable - Incoming request:', {
+//     headers: req.headers,
+//     params: req.params,
+//     body: req.body,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
 
-  try {
-    const { id: classId } = req.params;
-    const { subject, teacher_id, day_of_week, start_time, end_time, room_number } = req.body;
+//   try {
+//     const { id: classId } = req.params;
+//     const { subject, teacher_id, day_of_week, start_time, end_time, room_number } = req.body;
 
-    console.log('📋 POST /api/classes/:id/timetable - Adding slot:', {
-      classId, subject, day_of_week, start_time, end_time, teacher_id
-    });
+//     console.log('📋 POST /api/classes/:id/timetable - Adding slot:', {
+//       classId, subject, day_of_week, start_time, end_time, teacher_id
+//     });
 
-    // Verify class belongs to user's branch
-    const classCheck = await pool.query(
-      'SELECT id, semester FROM branch.classes WHERE id = $1 AND branch_id = $2::uuid',
-      [classId, req.user.branchId]
-    );
+//     // Verify class belongs to user's branch
+//     const classCheck = await pool.query(
+//       'SELECT id, semester FROM branch.classes WHERE id = $1 AND branch_id = $2::uuid',
+//       [classId, req.user.branchId]
+//     );
 
-    if (classCheck.rows.length === 0) {
-      console.log('⚠️ POST /api/classes/:id/timetable - Class not found:', classId);
-      return res.status(404).json({
-        success: false,
-        error: 'Class not found'
-      });
-    }
+//     if (classCheck.rows.length === 0) {
+//       console.log('⚠️ POST /api/classes/:id/timetable - Class not found:', classId);
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Class not found'
+//       });
+//     }
 
-    const classData = classCheck.rows[0];
+//     const classData = classCheck.rows[0];
 
-    // Validate required fields
-    if (!subject || !subject.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Subject is required'
-      });
-    }
+//     // Validate required fields
+//     if (!subject || !subject.trim()) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Subject is required'
+//       });
+//     }
 
-    if (!teacher_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Teacher is required'
-      });
-    }
+//     if (!teacher_id) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Teacher is required'
+//       });
+//     }
 
-    if (!day_of_week || day_of_week < 1 || day_of_week > 7) {
-      return res.status(400).json({
-        success: false,
-        error: 'Valid day of week (1-7) is required'
-      });
-    }
+//     if (!day_of_week || day_of_week < 1 || day_of_week > 7) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Valid day of week (1-7) is required'
+//       });
+//     }
 
-    if (!start_time || !end_time) {
-      return res.status(400).json({
-        success: false,
-        error: 'Start time and end time are required'
-      });
-    }
+//     if (!start_time || !end_time) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Start time and end time are required'
+//       });
+//     }
 
-    // Validate time format and logic
-    if (start_time >= end_time) {
-      return res.status(400).json({
-        success: false,
-        error: 'End time must be after start time'
-      });
-    }
+//     // Validate time format and logic
+//     if (start_time >= end_time) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'End time must be after start time'
+//       });
+//     }
 
-    // Validate teacher exists and is active
-    const teacherCheck = await pool.query(
-      'SELECT id FROM public.users WHERE id = $1 AND role = $2 AND status = $3 AND branch_id = $4',
-      [teacher_id, 'teacher', 'Active', req.user.branchId]
-    );
+//     // Validate teacher exists and is active
+//     const teacherCheck = await pool.query(
+//       'SELECT id FROM public.users WHERE id = $1 AND role = $2 AND status = $3 AND branch_id = $4',
+//       [teacher_id, 'teacher', 'Active', req.user.branchId]
+//     );
 
-    if (teacherCheck.rows.length === 0) {
-      console.log('⚠️ POST /api/classes/:id/timetable - Invalid teacher:', teacher_id);
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid teacher assignment'
-      });
-    }
+//     if (teacherCheck.rows.length === 0) {
+//       console.log('⚠️ POST /api/classes/:id/timetable - Invalid teacher:', teacher_id);
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Invalid teacher assignment'
+//       });
+//     }
 
-    // Check for time conflicts in the same class
-    const conflictCheck = await pool.query(`
-      SELECT id FROM branch.timetables 
-      WHERE class_id = $1 
-      AND day_of_week = $2 
-      AND (
-        (start_time <= $3 AND end_time > $3) OR
-        (start_time < $4 AND end_time >= $4) OR
-        (start_time >= $3 AND end_time <= $4)
-      )
-    `, [classId, day_of_week, start_time, end_time]);
+//     // Check for time conflicts in the same class
+//     const conflictCheck = await pool.query(`
+//       SELECT id FROM branch.timetables 
+//       WHERE class_id = $1 
+//       AND day_of_week = $2 
+//       AND (
+//         (start_time <= $3 AND end_time > $3) OR
+//         (start_time < $4 AND end_time >= $4) OR
+//         (start_time >= $3 AND end_time <= $4)
+//       )
+//     `, [classId, day_of_week, start_time, end_time]);
 
-    if (conflictCheck.rows.length > 0) {
-      console.log('⚠️ POST /api/classes/:id/timetable - Time conflict detected');
-      return res.status(409).json({
-        success: false,
-        error: 'Time conflict detected! This slot overlaps with an existing class.'
-      });
-    }
+//     if (conflictCheck.rows.length > 0) {
+//       console.log('⚠️ POST /api/classes/:id/timetable - Time conflict detected');
+//       return res.status(409).json({
+//         success: false,
+//         error: 'Time conflict detected! This slot overlaps with an existing class.'
+//       });
+//     }
 
-    // Get current academic year from class
-    const currentYear = await pool.query(
-      'SELECT academic_year FROM branch.classes WHERE id = $1',
-      [classId]
-    );
+//     // Get current academic year from class
+//     const currentYear = await pool.query(
+//       'SELECT academic_year FROM branch.classes WHERE id = $1',
+//       [classId]
+//     );
 
-    const academicYear = currentYear.rows[0]?.academic_year || '2024-25';
+//     const academicYear = currentYear.rows[0]?.academic_year || '2024-25';
 
-    // Insert timetable slot
-    const insertQuery = `
-      INSERT INTO branch.timetables (
-        branch_id, class_id, subject, teacher_id, 
-        day_of_week, start_time, end_time, room_number, 
-        academic_year, semester
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
+//     // Insert timetable slot
+//     const insertQuery = `
+//       INSERT INTO branch.timetables (
+//         branch_id, class_id, subject, teacher_id, 
+//         day_of_week, start_time, end_time, room_number, 
+//         academic_year, semester
+//       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+//       RETURNING *
+//     `;
 
-    const result = await pool.query(insertQuery, [
-      req.user.branchId,
-      classId,
-      subject,
-      teacher_id,
-      day_of_week,
-      start_time,
-      end_time,
-      room_number || null,
-      academicYear,
-      classData.semester
-    ]);
+//     const result = await pool.query(insertQuery, [
+//       req.user.branchId,
+//       classId,
+//       subject,
+//       teacher_id,
+//       day_of_week,
+//       start_time,
+//       end_time,
+//       room_number || null,
+//       academicYear,
+//       classData.semester
+//     ]);
 
-    const newSlot = result.rows[0];
+//     const newSlot = result.rows[0];
 
-    // Fetch teacher details
-    const teacherResult = await pool.query(
-      'SELECT name, email FROM public.users WHERE id = $1',
-      [teacher_id]
-    );
+//     // Fetch teacher details
+//     const teacherResult = await pool.query(
+//       'SELECT name, email FROM public.users WHERE id = $1',
+//       [teacher_id]
+//     );
 
-    if (teacherResult.rows.length > 0) {
-      newSlot.teacher = teacherResult.rows[0];
-    }
+//     if (teacherResult.rows.length > 0) {
+//       newSlot.teacher = teacherResult.rows[0];
+//     }
 
-    const response = {
-      success: true,
-      data: newSlot,
-      message: 'Timetable slot added successfully'
-    };
+//     const response = {
+//       success: true,
+//       data: newSlot,
+//       message: 'Timetable slot added successfully'
+//     };
 
-    console.log('✅ POST /api/classes/:id/timetable - Slot added:', {
-      slotId: newSlot.id,
-      classId,
-      subject,
-      teacher: teacherResult.rows[0]?.name || 'Unknown'
-    });
+//     console.log('✅ POST /api/classes/:id/timetable - Slot added:', {
+//       slotId: newSlot.id,
+//       classId,
+//       subject,
+//       teacher: teacherResult.rows[0]?.name || 'Unknown'
+//     });
 
-    res.status(201).json(response);
-  } catch (error) {
-    console.error('❌ POST /api/classes/:id/timetable - Server error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to add timetable slot'
-    });
-  }
-});
+//     res.status(201).json(response);
+//   } catch (error) {
+//     console.error('❌ POST /api/classes/:id/timetable - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to add timetable slot'
+//     });
+//   }
+// });
 
 // PUT /api/timetable/:id - Update timetable slot
 router.put('/timetable/:id', authenticateToken, async (req, res) => {
