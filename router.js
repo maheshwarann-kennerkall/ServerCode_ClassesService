@@ -296,8 +296,10 @@ router.get('/', authenticateToken, async (req, res) => {
     } else if (academic_year !== 'all') {
       // Default to current year if no specific year requested
       query += ` AND c.academic_year IN (
-        SELECT year_name FROM public.academic_years WHERE status = 'active'
+        SELECT year_name FROM public.academic_years WHERE status = 'active' AND branch_id = $${paramIndex}
       )`;
+      queryParams.push(branchId || req.user.branchId);
+      paramIndex++;
       console.log('🔍 DEBUG: Defaulting to active academic years');
     } else {
       console.log('🔍 DEBUG: Showing classes for all academic years');
@@ -471,15 +473,17 @@ router.post('/', authenticateToken, validateClassData, async (req, res) => {
   }
 });
 
-// GET /api/academic-years/active - Get active academic year (no role restrictions)
-router.get('/academic-years/active', async (req, res) => {
+// GET /api/academic-years/active - Get active academic year for user's branch
+router.get('/academic-years/active', authenticateToken, async (req, res) => {
   console.log('🔥 GET /api/academic-years/active - Incoming request:', {
     headers: req.headers,
+    user: req.user,
     timestamp: new Date().toISOString()
   });
 
   try {
-    console.log('📋 GET /api/academic-years/active - Fetching active academic year');
+    const { branchId } = req.user;
+    console.log('📋 GET /api/academic-years/active - Fetching active academic year for branch:', branchId);
 
     // Get the active academic year
     const result = await pool.query(`
@@ -490,10 +494,10 @@ router.get('/academic-years/active', async (req, res) => {
         start_date,
         end_date
       FROM public.academic_years
-      WHERE status = 'active'
+      WHERE status = 'active' AND branch_id = $1
       ORDER BY start_date DESC
       LIMIT 1
-    `);
+    `, [branchId]);
 
     if (result.rows.length === 0) {
       console.log('⚠️ GET /api/academic-years/active - No active academic year found');
@@ -522,15 +526,17 @@ router.get('/academic-years/active', async (req, res) => {
   }
 });
 
-// GET /api/academic-years - Get active academic years (no role restrictions)
-router.get('/academic-years', async (req, res) => {
+// GET /api/academic-years - Get active/upcoming academic years for user's branch
+router.get('/academic-years', authenticateToken, async (req, res) => {
   console.log('🔥 GET /api/academic-years - Incoming request:', {
     headers: req.headers,
+    user: req.user,
     timestamp: new Date().toISOString()
   });
 
   try {
-    console.log('📋 GET /api/academic-years - Fetching academic years');
+    const { branchId } = req.user;
+    console.log('📋 GET /api/academic-years - Fetching academic years for branch:', branchId);
 
     // Get all academic years with status 'active' and 'upcoming', prioritizing active ones
     const result = await pool.query(`
@@ -542,9 +548,9 @@ router.get('/academic-years', async (req, res) => {
         end_date,
         CASE WHEN status = 'active' THEN 1 ELSE 0 END as is_active_order
       FROM public.academic_years
-      WHERE status IN ('active', 'upcoming')
+      WHERE status IN ('active', 'upcoming') AND branch_id = $1
       ORDER BY is_active_order DESC, start_date DESC
-    `);
+    `, [branchId]);
 
     const response = {
       success: true,
@@ -1082,8 +1088,8 @@ router.put(
 
       /* 1️⃣ Fetch existing academic year */
       const existingRes = await client.query(
-        `SELECT * FROM public.academic_years WHERE year_name = $1`,
-        [id]
+        `SELECT * FROM public.academic_years WHERE year_name = $1 AND branch_id = $2`,
+        [id, branchId]
       );
 
       if (existingRes.rows.length === 0) {
@@ -1120,9 +1126,9 @@ router.put(
           `
           SELECT 1
           FROM public.academic_years
-          WHERE year_name = $1 AND year_name <> $2
+          WHERE year_name = $1 AND year_name <> $2 AND branch_id = $3
           `,
-          [year_name, id]
+          [year_name, id, branchId]
         );
 
         if (dupCheck.rows.length > 0) {
@@ -1259,8 +1265,8 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Check if academic year exists
     const existingYear = await pool.query(
-      'SELECT * FROM public.academic_years WHERE year_name = $1',
-      [id]
+      'SELECT * FROM public.academic_years WHERE year_name = $1 AND branch_id = $2',
+      [id, req.user.branchId]
     );
 
     if (existingYear.rows.length === 0) {
@@ -1275,8 +1281,8 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Check if academic year is being used in classes
     const classesCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM branch.classes WHERE academic_year = $1',
-      [id]
+      'SELECT COUNT(*) as count FROM branch.classes WHERE academic_year = $1 AND branch_id = $2',
+      [id, req.user.branchId]
     );
 
     if (parseInt(classesCheck.rows[0].count) > 0) {
@@ -1289,8 +1295,8 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Check if academic year is being used in students
     const studentsCheck = await pool.query(
-      'SELECT COUNT(*) as count FROM branch.students WHERE academic_year = $1',
-      [id]
+      'SELECT COUNT(*) as count FROM branch.students WHERE academic_year = $1 AND branch_id = $2',
+      [id, req.user.branchId]
     );
 
     if (parseInt(studentsCheck.rows[0].count) > 0) {
@@ -1303,8 +1309,8 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Delete the academic year
     const deleteResult = await pool.query(
-      'DELETE FROM public.academic_years WHERE year_name = $1',
-      [id]
+      'DELETE FROM public.academic_years WHERE year_name = $1 AND branch_id = $2',
+      [id, req.user.branchId]
     );
 
     if (deleteResult.rowCount === 0) {
@@ -2387,8 +2393,8 @@ router.get('/timetables/teacher/:teacher_id', authenticateToken, async (req, res
     // Default to current academic year if not provided
     if (!academic_year) {
       const academicYearResult = await pool.query(
-        'SELECT year_name FROM public.academic_years WHERE status = $1 ORDER BY start_date DESC LIMIT 1',
-        ['active']
+        'SELECT year_name FROM public.academic_years WHERE status = $1 AND branch_id = $2 ORDER BY start_date DESC LIMIT 1',
+        ['active', req.user.branchId]
       );
       academic_year = academicYearResult.rows.length > 0
         ? academicYearResult.rows[0].year_name
@@ -2566,8 +2572,8 @@ router.post('/timetables', authenticateToken, async (req, res) => {
 
     // Get current academic year
     const academicYearResult = await pool.query(
-      'SELECT year_name FROM public.academic_years WHERE status = $1 ORDER BY start_date DESC LIMIT 1',
-      ['active']
+      'SELECT year_name FROM public.academic_years WHERE status = $1 AND branch_id = $2 ORDER BY start_date DESC LIMIT 1',
+      ['active', req.user.branchId]
     );
 
     const academic_year = academicYearResult.rows.length > 0
@@ -3797,8 +3803,8 @@ router.post('/bulk-create', authenticateToken, async (req, res) => {
 
     // Get current active academic year
     const activeYearResult = await pool.query(
-      'SELECT year_name FROM public.academic_years WHERE status = $1 ORDER BY start_date DESC LIMIT 1',
-      ['active']
+      'SELECT year_name FROM public.academic_years WHERE status = $1 AND branch_id = $2 ORDER BY start_date DESC LIMIT 1',
+      ['active', req.user.branchId]
     );
 
     if (activeYearResult.rows.length === 0) {
@@ -5287,7 +5293,7 @@ router.get('/:id/attendance', authenticateToken, async (req, res) => {
 
   try {
     const { id: classId } = req.params;
-    const { start_date, end_date, status, limit = 50, offset = 0 } = req.query;
+    const { start_date, end_date, date, status, limit = 50, offset = 0 } = req.query;
 
     console.log('📋 GET /api/classes/:id/attendance - Fetching attendance:', {
       classId,
@@ -5341,16 +5347,23 @@ router.get('/:id/attendance', authenticateToken, async (req, res) => {
     let paramIndex = 2;
 
     // Add date range filters
-    if (start_date) {
-      query += ` AND a.attendance_date >= $${paramIndex}`;
-      queryParams.push(start_date);
+    if (date) {
+      // If specific date provided, filter for that day
+      query += ` AND a.attendance_date = $${paramIndex}`;
+      queryParams.push(date);
       paramIndex++;
-    }
+    } else {
+      if (start_date) {
+        query += ` AND a.attendance_date >= $${paramIndex}`;
+        queryParams.push(start_date);
+        paramIndex++;
+      }
 
-    if (end_date) {
-      query += ` AND a.attendance_date <= $${paramIndex}`;
-      queryParams.push(end_date);
-      paramIndex++;
+      if (end_date) {
+        query += ` AND a.attendance_date <= $${paramIndex}`;
+        queryParams.push(end_date);
+        paramIndex++;
+      }
     }
 
     // Add status filter
