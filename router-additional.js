@@ -1614,7 +1614,440 @@ router.put('/students/notifications/:id/read', authenticateToken, requireRole('s
   }
 });
 
-module.exports = router;
+
+// GET /api/classes/teachers/my-classes - Get all classes for a teacher (Class Teacher + Subject Teacher)
+
+router.get('/teachers/my-classes', authenticateToken, requireRole('teacher'), async (req, res) => {
+  console.log('🔥 GET /api/classes/teachers/my-classes');
+
+  try {
+    const teacherUUID = req.user.userId;
+    const branchId = req.user.branchId;
+
+    console.log('Teacher UUID:', teacherUUID);
+    console.log('Branch ID:', branchId);
+
+    // =========================================
+    // 1️⃣ Get Active Academic Year
+    // =========================================
+    const academicYearResult = await pool.query(
+      `SELECT year_name
+         FROM public.academic_years
+         WHERE status = 'active'
+           AND branch_id = $1
+         LIMIT 1`,
+      [branchId]
+    );
+
+    const academicYear =
+      academicYearResult.rows[0]?.year_name ||
+      new Date().getFullYear() +
+      '-' +
+      (new Date().getFullYear() + 1);
+
+    // =========================================
+    // 2️⃣ Get Class Teacher Classes
+    // =========================================
+    const classTeacherResult = await pool.query(`
+        SELECT *
+        FROM branch.classes
+        WHERE teacher_id = $1
+          AND branch_id = $2::uuid
+          AND status = 'Active'
+      `, [teacherUUID, branchId]);
+
+    const classTeacherClasses = classTeacherResult.rows;
+
+    // =========================================
+    // 3️⃣ Get Subject Teaching From Timetable Master
+    // =========================================
+    const timetableResult = await pool.query(`
+        SELECT class_id, class_name, timetable_data
+        FROM branch.timetables_master
+        WHERE branch_id = $1
+          AND academic_year = $2
+      `, [branchId, academicYear]);
+
+    const subjectClassesMap = new Map();
+
+    for (const timetable of timetableResult.rows) {
+      const { class_id, class_name, timetable_data } = timetable;
+      if (!timetable_data) continue;
+
+      for (const day of Object.keys(timetable_data)) {
+        const dayData = timetable_data[day];
+        if (!dayData) continue;
+
+        for (const timeSlot of Object.keys(dayData)) {
+          const slot = dayData[timeSlot];
+          if (!slot || !slot.faculty) continue;
+
+          if (slot.faculty === teacherUUID) {
+            if (!subjectClassesMap.has(class_id)) {
+              subjectClassesMap.set(class_id, {
+                id: class_id,
+                class_name,
+                subjects: new Set()
+              });
+            }
+
+            subjectClassesMap.get(class_id).subjects.add(slot.subject);
+          }
+        }
+      }
+    }
+
+    // =========================================
+    // 4️⃣ Build Final Response
+    // =========================================
+    const responseData = [];
+
+    // Handle Class Teacher Classes
+    for (const classItem of classTeacherClasses) {
+      const studentCountResult = await pool.query(
+        `SELECT COUNT(*) as count
+           FROM branch.students
+           WHERE class_id = $1 AND status = 'Active'`,
+        [classItem.id]
+      );
+
+      const subjectsFromTimetable =
+        subjectClassesMap.get(classItem.id);
+
+      responseData.push({
+        ...classItem,
+        student_count: parseInt(studentCountResult.rows[0].count),
+        role_type: 'Class Teacher',
+        is_class_teacher: true,
+        subjects_taught: subjectsFromTimetable
+          ? Array.from(subjectsFromTimetable.subjects)
+          : []
+      });
+
+      // Remove from subject map to avoid duplication
+      subjectClassesMap.delete(classItem.id);
+    }
+
+    // Handle Pure Subject Teacher Classes
+    for (const [classId, classData] of subjectClassesMap.entries()) {
+      responseData.push({
+        id: classId,
+        class_name: classData.class_name,
+        role_type: 'Subject Teacher',
+        is_class_teacher: false,
+        subjects_taught: Array.from(classData.subjects),
+        student_count: 0 // Optional: fetch if needed
+      });
+    }
+
+    console.log(`✅ Found ${responseData.length} classes`);
+
+    res.json({
+      success: true,
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('❌ Error in my-classes API:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch teacher classes'
+    });
+  }
+}
+);
+
+
+// GET /api/classes/teachers/my-students - Get all students for a teacher (from all teaching classes)
+// router.get('/teachers/my-students', authenticateToken, requireRole('teacher'), async (req, res) => {
+//   console.log('🔥 GET /api/classes/teachers/my-students - Incoming request:', {
+//     headers: req.headers,
+//     user: req.user,
+//     timestamp: new Date().toISOString()
+//   });
+
+//   try {
+//     const teacherUUID = req.user.userId;
+//     const branchId = req.user.branchId;
+
+//     console.log('📋 GET /api/classes/teachers/my-students - Fetching students for:', teacherUUID);
+
+//     // 1. Get Active Academic Year
+//     const academicYearResult = await pool.query(
+//       "SELECT year_name FROM public.academic_years WHERE status = 'active' AND branch_id = $1 LIMIT 1",
+//       [branchId]
+//     );
+//     const academicYear = academicYearResult.rows.length > 0
+//       ? academicYearResult.rows[0].year_name
+//       : new Date().getFullYear() + '-' + (new Date().getFullYear() + 1);
+
+//     // 2. Identify Teaching Classes and Subjects from Timetable Master
+//     const timetablesResult = await pool.query(`
+//       SELECT class_id, timetable_data 
+//       FROM branch.timetables_master
+//       WHERE branch_id = $1 AND academic_year = $2
+//     `, [branchId, academicYear]);
+
+//     const teachingMap = new Map(); // class_id -> Set(subjects)
+
+//     timetablesResult.rows.forEach(row => {
+//       const { class_id, timetable_data } = row;
+//       if (!timetable_data) return;
+
+//       Object.values(timetable_data).forEach(dayData => {
+//         if (!dayData) return;
+//         Object.values(dayData).forEach(slot => {
+//           if (slot && slot.faculty === teacherUUID && slot.subject) {
+//             if (!teachingMap.has(class_id)) {
+//               teachingMap.set(class_id, new Set());
+//             }
+//             teachingMap.get(class_id).add(slot.subject);
+//           }
+//         });
+//       });
+//     });
+
+//     // 3. Identify Classes where user is "Class Teacher"
+//     const classTeacherResult = await pool.query(`
+//       SELECT id 
+//       FROM branch.classes 
+//       WHERE teacher_id = $1 AND branch_id = $2 AND status = 'Active'
+//     `, [teacherUUID, branchId]);
+
+//     const classTeacherIds = new Set(classTeacherResult.rows.map(r => r.id));
+
+//     // Combine all relevant class IDs
+//     const allClassIds = new Set([...teachingMap.keys(), ...classTeacherIds]);
+
+//     if (allClassIds.size === 0) {
+//       console.log('⚠️ GET /api/classes/teachers/my-students - No classes found for teacher');
+//       return res.json({ success: true, data: [] });
+//     }
+
+//     const classIdsArray = Array.from(allClassIds);
+
+//     // 4. Fetch Students
+//     const studentsQuery = `
+//       SELECT 
+//         s.id,
+//         s.student_id,
+//         s.status,
+//         s.class_id,
+//         u.name,
+//         u.email,
+//         s.roll_no,
+//         s.profile_image,
+//         c.class_name,
+//         c.academic_year
+//       FROM branch.students s
+//       JOIN public.users u ON s.user_id = u.id
+//       JOIN branch.classes c ON s.class_id = c.id
+//       WHERE s.branch_id = $1
+//         AND s.class_id = ANY($2::uuid[])
+//         AND s.status = 'Active'
+//       ORDER BY c.class_name, s.roll_no, u.name
+//     `;
+
+//     const studentsResult = await pool.query(studentsQuery, [branchId, classIdsArray]);
+
+//     const formattedStudents = studentsResult.rows.map(row => {
+//       const subjects = teachingMap.has(row.class_id)
+//         ? Array.from(teachingMap.get(row.class_id))
+//         : [];
+
+//       const isClassTeacher = classTeacherIds.has(row.class_id);
+
+//       return {
+//         id: row.id,
+//         student_id: row.student_id,
+//         status: row.status,
+//         users: {
+//           name: row.name,
+//           email: row.email
+//         },
+//         classes: {
+//           class_name: row.class_name,
+//           academic_year: row.academic_year
+//         },
+//         roll_no: row.roll_no,
+//         profile_image: row.profile_image,
+//         class_id: row.class_id,
+//         subjects: subjects,
+//         is_class_teacher: isClassTeacher
+//       };
+//     });
+
+//     console.log(`✅ GET /api/classes/teachers/my-students - Found ${formattedStudents.length} students`);
+//     res.json({
+//       success: true,
+//       data: formattedStudents
+//     });
+
+//   } catch (error) {
+//     console.error('❌ GET /api/classes/teachers/my-students - Server error:', error.message);
+//     res.status(500).json({
+//       success: false,
+//       error: 'Failed to fetch teacher students'
+//     });
+//   }
+// });
+router.get(
+  '/teachers/my-students',
+  authenticateToken,
+  requireRole('teacher'),
+  async (req, res) => {
+    console.log('🔥 GET /api/classes/teachers/my-students');
+
+    try {
+      const teacherUUID = req.user.userId;
+      const branchId = req.user.branchId;
+
+      console.log('Teacher UUID:', teacherUUID);
+
+      // =========================================
+      // 1️⃣ Get Active Academic Year
+      // =========================================
+      const academicYearResult = await pool.query(
+        `SELECT year_name
+         FROM public.academic_years
+         WHERE status = 'active'
+           AND branch_id = $1
+         LIMIT 1`,
+        [branchId]
+      );
+
+      const academicYear =
+        academicYearResult.rows[0]?.year_name ||
+        new Date().getFullYear() +
+        '-' +
+        (new Date().getFullYear() + 1);
+
+      // =========================================
+      // 2️⃣ Get Subject Teaching Classes
+      // =========================================
+      const timetableResult = await pool.query(`
+        SELECT class_id, timetable_data
+        FROM branch.timetables_master
+        WHERE branch_id = $1
+          AND academic_year = $2
+      `, [branchId, academicYear]);
+
+      const teachingClassIds = new Set();
+
+      for (const row of timetableResult.rows) {
+        const { class_id, timetable_data } = row;
+        if (!timetable_data) continue;
+
+        for (const day of Object.keys(timetable_data)) {
+          const dayData = timetable_data[day];
+          if (!dayData) continue;
+
+          for (const timeSlot of Object.keys(dayData)) {
+            const slot = dayData[timeSlot];
+
+            if (
+              slot &&
+              slot.subject &&
+              (slot.faculty === teacherUUID)
+            ) {
+              teachingClassIds.add(class_id);
+            }
+          }
+        }
+      }
+
+      // =========================================
+      // 3️⃣ Get Class Teacher Classes
+      // =========================================
+      const classTeacherResult = await pool.query(`
+        SELECT id
+        FROM branch.classes
+        WHERE teacher_id = $1
+          AND branch_id = $2::uuid
+          AND status = 'Active'
+      `, [teacherUUID, branchId]);
+
+      const classTeacherIds = classTeacherResult.rows.map(r => r.id);
+
+      // Combine both
+      const allClassIds = new Set([
+        ...teachingClassIds,
+        ...classTeacherIds
+      ]);
+
+      if (allClassIds.size === 0) {
+        console.log('No classes found for teacher');
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
+
+      const classIdsArray = Array.from(allClassIds);
+
+      // =========================================
+      // 4️⃣ Fetch All Students From Those Classes
+      // =========================================
+      const studentsResult = await pool.query(`
+        SELECT 
+          s.id,
+          s.student_id,
+          s.status,
+          s.roll_number,
+          s.photo_url,
+          s.class_id,
+          u.name,
+          u.email,
+          c.class_name,
+          c.standard,
+          c.academic_year
+        FROM branch.students s
+        JOIN public.users u ON s.user_id = u.id
+        JOIN branch.classes c ON s.class_id = c.id
+        WHERE s.branch_id = $1
+          AND s.class_id = ANY($2::uuid[])
+          AND LOWER(s.status) = 'active'
+        ORDER BY c.class_name, s.roll_number, u.name
+      `, [branchId, classIdsArray]);
+
+
+      const formattedStudents = studentsResult.rows.map(row => ({
+        id: row.id,
+        student_id: row.student_id,
+        roll_no: row.roll_no,
+        profile_image: row.profile_image,
+        status: row.status,
+        class_id: row.class_id,
+        users: {
+          name: row.name,
+          email: row.email
+        },
+        classes: {
+          class_name: row.class_name,
+          standard: row.standard,
+          academic_year: row.academic_year
+        }
+      }));
+
+      console.log(`✅ Found ${formattedStudents.length} students`);
+
+      // =========================================
+      // FINAL RESPONSE (ARRAY ONLY)
+      // =========================================
+      res.json({
+        success: true,
+        data: formattedStudents
+      });
+
+    } catch (error) {
+      console.error('❌ Error in my-students API:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch teacher students'
+      });
+    }
+  }
+);
 
 
 module.exports = router;
