@@ -5813,6 +5813,108 @@ router.get('/attendance/date/:date', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/classes/:classId/students/:studentId/attendance-summary
+router.get('/:classId/students/:studentId/attendance-summary', authenticateToken, async (req, res) => {
+  try {
+    const { classId, studentId } = req.params;
+    const { startDate, endDate } = req.query;
+    const branchId = req.user.branchId;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'startDate and endDate are required'
+      });
+    }
+
+    // 1️⃣ Verify Class and Student
+    const studentCheck = await pool.query(
+      `SELECT s.id, s.student_id, s.roll_number, u.name, c.class_name
+       FROM branch.students s
+       JOIN public.users u ON s.user_id = u.id
+       JOIN branch.classes c ON s.class_id = c.id
+       WHERE s.id = $1 AND s.class_id = $2 AND s.branch_id = $3`,
+      [studentId, classId, branchId]
+    );
+
+    if (studentCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Student not found in this class'
+      });
+    }
+
+    const studentData = studentCheck.rows[0];
+
+    // 2️⃣ Get Holidays
+    const holidayResult = await pool.query(
+      `SELECT date FROM branch.holidays
+       WHERE branch_id = $1 AND date BETWEEN $2 AND $3`,
+      [branchId, startDate, endDate]
+    );
+
+    const holidayDates = holidayResult.rows.map(h =>
+      h.date.toISOString().split('T')[0]
+    );
+
+    // 3️⃣ Get Attendance Records for this student
+    const attendanceResult = await pool.query(
+      `SELECT id, attendance_date, status, remarks, subject, marked_at
+       FROM branch.attendance
+       WHERE student_id = $1 AND class_id = $2
+         AND attendance_date BETWEEN $3 AND $4
+       ORDER BY attendance_date DESC`,
+      [studentId, classId, startDate, endDate]
+    );
+
+    const attendanceRecords = attendanceResult.rows;
+
+    // 4️⃣ Calculate Summary
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const totalDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    const holidaysCount = holidayDates.length;
+    const workingDays = totalDays - holidaysCount;
+
+    const presentCount = attendanceRecords.filter(a => a.status === 'Present').length;
+    const absentCount = attendanceRecords.filter(a => a.status === 'Absent').length;
+    const lateCount = attendanceRecords.filter(a => a.status === 'Late').length;
+
+    res.json({
+      success: true,
+      data: {
+        student: {
+          id: studentData.id,
+          student_id: studentData.student_id,
+          name: studentData.name,
+          roll_number: studentData.roll_number,
+          class_name: studentData.class_name
+        },
+        range: { startDate, endDate },
+        summary: {
+          total_days: totalDays,
+          holidays: holidaysCount,
+          working_days: workingDays,
+          present: presentCount,
+          absent: absentCount,
+          late: lateCount,
+          attendance_percentage: workingDays > 0
+            ? ((presentCount / workingDays) * 100).toFixed(2)
+            : "0.00"
+        },
+        attendance_records: attendanceRecords
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Student attendance summary error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch student attendance summary'
+    });
+  }
+});
+
 // GET /api/classes/:classId/students-attendance-summary
 router.get('/:classId/students-attendance-summary', authenticateToken, async (req, res) => {
   try {
