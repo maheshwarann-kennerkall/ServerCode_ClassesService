@@ -156,7 +156,7 @@ router.post('/subjects', authenticateToken, requireRole('admin', 'superadmin'), 
   }
 });
 
-// PUT /api/subjects/:id - Update subject (only name field)
+// PUT /api/subjects/:id - Update subject
 router.put('/subjects/:id', authenticateToken, requireRole('admin', 'superadmin'), async (req, res) => {
   console.log('🔥 PUT /api/subjects/:id - Incoming request:', {
     headers: req.headers,
@@ -168,7 +168,7 @@ router.put('/subjects/:id', authenticateToken, requireRole('admin', 'superadmin'
 
   try {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, department, subject_type } = req.body;
 
     // Validate required fields
     if (!name) {
@@ -199,10 +199,13 @@ router.put('/subjects/:id', authenticateToken, requireRole('admin', 'superadmin'
 
     const result = await pool.query(`
       UPDATE branch.subjects SET
-        name = $1, updated_at = NOW()
-      WHERE id = $2 AND branch_id = $3
+        name = $1, 
+        department = $2,
+        subject_type = $3,
+        updated_at = NOW()
+      WHERE id = $4 AND branch_id = $5::uuid
       RETURNING *
-    `, [name, id, req.user.branchId]);
+    `, [name, department, subject_type, id, req.user.branchId]);
 
     res.json({
       success: true,
@@ -921,7 +924,7 @@ router.put(
 
       /* 1️⃣ Fetch existing academic year */
       const existingRes = await client.query(
-        `SELECT * FROM public.academic_years WHERE year_name = $1 AND branch_id = $2`,
+        `SELECT * FROM public.academic_years WHERE id = $1 AND branch_id = $2`,
         [id, branchId]
       );
 
@@ -954,12 +957,12 @@ router.put(
       }
 
       /* 4️⃣ Ensure year_name uniqueness */
-      if (year_name && year_name !== id) {
+      if (year_name && year_name !== currentYear.year_name) {
         const dupCheck = await client.query(
           `
           SELECT 1
           FROM public.academic_years
-          WHERE year_name = $1 AND year_name <> $2 AND branch_id = $3
+          WHERE year_name = $1 AND id <> $2 AND branch_id = $3
           `,
           [year_name, id, branchId]
         );
@@ -1044,7 +1047,7 @@ router.put(
       const updateQuery = `
         UPDATE public.academic_years
         SET ${fields.join(', ')}
-        WHERE year_name = $${i}
+        WHERE id = $${i}
         RETURNING *
       `;
 
@@ -1098,7 +1101,7 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Check if academic year exists
     const existingYear = await pool.query(
-      'SELECT * FROM public.academic_years WHERE year_name = $1 AND branch_id = $2',
+      'SELECT * FROM public.academic_years WHERE id = $1 AND branch_id = $2',
       [id, req.user.branchId]
     );
 
@@ -1111,15 +1114,16 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
     }
 
     const yearData = existingYear.rows[0];
+    const yearName = yearData.year_name;
 
     // Check if academic year is being used in classes
     const classesCheck = await pool.query(
       'SELECT COUNT(*) as count FROM branch.classes WHERE academic_year = $1 AND branch_id = $2',
-      [id, req.user.branchId]
+      [yearName, req.user.branchId]
     );
 
     if (parseInt(classesCheck.rows[0].count) > 0) {
-      console.log('⚠️ DELETE /api/academic-years/:id - Academic year has classes:', id);
+      console.log('⚠️ DELETE /api/academic-years/:id - Academic year has classes:', yearName);
       return res.status(400).json({
         success: false,
         error: 'Cannot delete academic year that has classes assigned to it. Please delete or reassign classes first.'
@@ -1129,11 +1133,11 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
     // Check if academic year is being used in students
     const studentsCheck = await pool.query(
       'SELECT COUNT(*) as count FROM branch.students WHERE academic_year = $1 AND branch_id = $2',
-      [id, req.user.branchId]
+      [yearName, req.user.branchId]
     );
 
     if (parseInt(studentsCheck.rows[0].count) > 0) {
-      console.log('⚠️ DELETE /api/academic-years/:id - Academic year has students:', id);
+      console.log('⚠️ DELETE /api/academic-years/:id - Academic year has students:', yearName);
       return res.status(400).json({
         success: false,
         error: 'Cannot delete academic year that has students assigned to it. Please delete or reassign students first.'
@@ -1142,7 +1146,7 @@ router.delete('/academic-years/:id', authenticateToken, requireRole('admin', 'su
 
     // Delete the academic year
     const deleteResult = await pool.query(
-      'DELETE FROM public.academic_years WHERE year_name = $1 AND branch_id = $2',
+      'DELETE FROM public.academic_years WHERE id = $1 AND branch_id = $2',
       [id, req.user.branchId]
     );
 
@@ -1262,6 +1266,7 @@ router.get('/syllabus', authenticateToken, async (req, res) => {
       if (!classEntry.subjects.has(subjectKey)) {
         classEntry.subjects.set(subjectKey, {
           subject: row.subject_name,
+          syllabusId: row.syllabus_id,
           chapters: []
         });
       }
@@ -1291,6 +1296,7 @@ router.get('/syllabus', authenticateToken, async (req, res) => {
       class: classEntry.class,
       subjects: Array.from(classEntry.subjects.values()).map(subjectEntry => ({
         subject: subjectEntry.subject,
+        syllabusId: subjectEntry.syllabusId,
         chapters: subjectEntry.chapters.sort((a, b) => new Date(a.startDate) - new Date(b.startDate))
       }))
     }));
@@ -5812,6 +5818,120 @@ router.get('/attendance/date/:date', authenticateToken, async (req, res) => {
     });
   }
 });
+
+router.get('/attendance/today-summary', authenticateToken, async (req, res) => {
+  try {
+    const { branchId } = req.user;
+
+    // ✅ Get today's date (YYYY-MM-DD)
+    const today = new Date().toISOString().split('T')[0];
+
+    // =====================================================
+    // 1️⃣ Get Active Teachers & Staff
+    // =====================================================
+    const usersResult = await pool.query(
+      `SELECT id, role
+       FROM public.users
+       WHERE branch_id = $1
+         AND role IN ('teacher', 'staff')
+         AND status = 'Active'
+         AND is_active = true`,
+      [branchId]
+    );
+
+    const teachers = usersResult.rows.filter(u => u.role === 'teacher');
+    const staff = usersResult.rows.filter(u => u.role === 'staff');
+
+    const teacherIds = teachers.map(t => t.id);
+    const staffIds = staff.map(s => s.id);
+
+    // =====================================================
+    // 2️⃣ Get Active Students
+    // =====================================================
+    const studentsResult = await pool.query(
+      `SELECT id
+       FROM branch.students
+       WHERE branch_id = $1
+         AND status = 'Active'`,
+      [branchId]
+    );
+
+    const studentIds = studentsResult.rows.map(s => s.id);
+
+    // =====================================================
+    // 3️⃣ Get Today's Employee Attendance
+    // =====================================================
+    const employeeAttendance = await pool.query(
+      `SELECT employee_id, status
+       FROM branch.employee_attendance
+       WHERE branch_id = $1
+         AND date = $2`,
+      [branchId, today]
+    );
+
+    const empAttendanceData = employeeAttendance.rows;
+
+    // =====================================================
+    // 4️⃣ Get Today's Student Attendance
+    // =====================================================
+    const studentAttendance = await pool.query(
+      `SELECT student_id, status
+       FROM branch.attendance
+       WHERE attendance_date = $1`,
+      [today]
+    );
+
+    const studentAttendanceData = studentAttendance.rows;
+
+    // =====================================================
+    // 5️⃣ Helper Function
+    // =====================================================
+    const calculateEmployeeStats = (ids) => {
+      const filtered = empAttendanceData.filter(a =>
+        ids.includes(a.employee_id)
+      );
+
+      return {
+        total: ids.length,
+        present: filtered.filter(a => a.status === 'Present').length,
+        absent: filtered.filter(a => a.status === 'Absent').length
+      };
+    };
+
+    const calculateStudentStats = () => {
+      const filtered = studentAttendanceData.filter(a =>
+        studentIds.includes(a.student_id)
+      );
+
+      return {
+        total: studentIds.length,
+        present: filtered.filter(a => a.status === 'Present').length,
+        absent: filtered.filter(a => a.status === 'Absent').length
+      };
+    };
+
+    // =====================================================
+    // 6️⃣ Final Response
+    // =====================================================
+    res.json({
+      success: true,
+      date: today,
+      data: {
+        teachers: calculateEmployeeStats(teacherIds),
+        staff: calculateEmployeeStats(staffIds),
+        students: calculateStudentStats()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Today attendance summary error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch today attendance summary'
+    });
+  }
+});
+
 
 // GET /api/classes/:classId/students/:studentId/attendance-summary
 router.get('/:classId/students/:studentId/attendance-summary', authenticateToken, async (req, res) => {
